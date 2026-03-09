@@ -1,0 +1,28 @@
+[package]
+name = "pyan-rs"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "pyan-rs"
+path = "src/main.rs"
+
+[lib]
+name = "pyan_rs"
+path = "src/lib.rs"
+
+[dependencies]
+ruff_python_ast = { git = "https://github.com/astral-sh/ruff.git" }
+ruff_python_parser = { git = "https://github.com/astral-sh/ruff.git" }
+ruff_source_file = { git = "https://github.com/astral-sh/ruff.git" }
+ruff_text_size = { git = "https://github.com/astral-sh/ruff.git" }
+petgraph = "0.7"
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+log = "0.4"
+env_logger = "0.11"
+walkdir = "2"
+
+[dev-dependencies]
+insta = "1"
+tempfile = "3"
