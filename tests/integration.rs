@@ -879,6 +879,32 @@ fn test_accuracy_dict_subscript_call() {
     );
 }
 
+#[test]
+fn test_accuracy_list_subscript_method_resolution() {
+    let cg = make_single_fixture_graph("accuracy_container.py");
+    assert!(
+        has_uses_edge(&cg, "list_subscript_method_caller", "handle_a"),
+        "list_subscript_method_caller should use handle_a via handlers[0]"
+    );
+    assert!(
+        has_uses_edge(&cg, "list_subscript_method_caller", "handle_b"),
+        "list_subscript_method_caller should use handle_b via handlers[1]"
+    );
+}
+
+#[test]
+fn test_accuracy_dict_subscript_method_resolution() {
+    let cg = make_single_fixture_graph("accuracy_container.py");
+    assert!(
+        has_uses_edge(&cg, "dict_subscript_method_caller", "handle_a"),
+        "dict_subscript_method_caller should use handle_a via handlers[\"a\"]"
+    );
+    assert!(
+        has_uses_edge(&cg, "dict_subscript_method_caller", "handle_b"),
+        "dict_subscript_method_caller should use handle_b via handlers[\"b\"]"
+    );
+}
+
 // -------------------------------------------------------------------
 // from-star-import accuracy
 //

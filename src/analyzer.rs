@@ -36,6 +36,12 @@ struct ScopeInfo {
     #[allow(dead_code)]
     name: String,
     defs: HashMap<String, ValueSet>,
+    /// Shallow container facts for locally-bound names/attributes.
+    ///
+    /// This tracks statically-known list/tuple/dict literal contents so that
+    /// later `x[i]` / `x["k"]` expressions can resolve through the retrieved
+    /// value instead of collapsing back to the container object.
+    containers: HashMap<String, ContainerFacts>,
     locals: HashSet<String>,
     /// Statically-known `__all__` exports for this module scope.
     ///
@@ -49,11 +55,106 @@ struct ScopeInfo {
     all_exports: Option<HashSet<String>>,
 }
 
+/// A shallow abstract value: concrete NodeIds plus any statically-known
+/// container literal structure attached to the binding.
+#[derive(Debug, Clone, Default)]
+struct ShallowValue {
+    values: ValueSet,
+    containers: ContainerFacts,
+}
+
+impl ShallowValue {
+    fn union_with(&mut self, other: &ShallowValue) -> bool {
+        let values_changed = self.values.union_with(&other.values);
+        let containers_changed = self.containers.union_with(&other.containers);
+        values_changed || containers_changed
+    }
+
+    fn first_value(&self) -> Option<NodeId> {
+        self.values.first()
+    }
+}
+
+/// A literal key we can statically interpret in a subscript expression.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum LiteralKey {
+    Int(i64),
+    String(String),
+}
+
+/// A single shallow container fact.
+#[derive(Debug, Clone)]
+enum ContainerFact {
+    Sequence(Vec<ShallowValue>),
+    Mapping(HashMap<LiteralKey, ShallowValue>),
+}
+
+/// A small set of shallow container facts for a single binding.
+#[derive(Debug, Clone, Default)]
+struct ContainerFacts(Vec<ContainerFact>);
+
+impl ContainerFacts {
+    fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    fn push(&mut self, fact: ContainerFact) {
+        self.0.push(fact);
+    }
+
+    fn union_with(&mut self, other: &ContainerFacts) -> bool {
+        if other.0.is_empty() {
+            return false;
+        }
+        let before = self.0.len();
+        self.0.extend(other.0.iter().cloned());
+        self.0.len() != before
+    }
+
+    fn resolve_subscript(&self, key: Option<&LiteralKey>) -> ShallowValue {
+        let mut resolved = ShallowValue::default();
+        for fact in &self.0 {
+            match fact {
+                ContainerFact::Sequence(items) => {
+                    if let Some(LiteralKey::Int(index)) = key {
+                        let idx = if *index >= 0 {
+                            usize::try_from(*index).ok()
+                        } else {
+                            let len = items.len() as i64;
+                            usize::try_from(len + index).ok()
+                        };
+                        if let Some(item) = idx.and_then(|idx| items.get(idx)) {
+                            resolved.union_with(item);
+                        }
+                    } else {
+                        for item in items {
+                            resolved.union_with(item);
+                        }
+                    }
+                }
+                ContainerFact::Mapping(items) => {
+                    if let Some(key) = key {
+                        if let Some(value) = items.get(key) {
+                            resolved.union_with(value);
+                        }
+                    } else {
+                        for value in items.values() {
+                            resolved.union_with(value);
+                        }
+                    }
+                }
+            }
+        }
+        resolved
+    }
+}
+
 impl ScopeInfo {
     fn new(name: &str) -> Self {
         Self {
             name: name.to_string(),
             defs: HashMap::new(),
+            containers: HashMap::new(),
             locals: HashSet::new(),
             all_exports: None,
         }
@@ -68,6 +169,7 @@ impl ScopeInfo {
         Self {
             name: name.to_string(),
             defs,
+            containers: HashMap::new(),
             locals,
             all_exports: None,
         }
@@ -286,6 +388,9 @@ impl CallGraph {
             if let Some(existing) = self.scopes.get_mut(&ns) {
                 for (name, vs) in sc.defs {
                     existing.defs.entry(name).or_default().union_with(&vs);
+                }
+                for (name, facts) in sc.containers {
+                    existing.containers.entry(name).or_default().union_with(&facts);
                 }
                 // Propagate __all__ if newly discovered.
                 if existing.all_exports.is_none() && sc.all_exports.is_some() {
@@ -708,6 +813,18 @@ impl CallGraph {
         ValueSet::empty()
     }
 
+    /// Get all shallow container facts of `name` in the current scope stack.
+    fn get_containers(&self, name: &str) -> ContainerFacts {
+        for scope_key in self.scope_stack.iter().rev() {
+            if let Some(scope) = self.scopes.get(scope_key)
+                && let Some(facts) = scope.containers.get(name)
+            {
+                return facts.clone();
+            }
+        }
+        ContainerFacts::default()
+    }
+
     /// Add `value` to the binding set of `name` in the innermost scope that
     /// declares it.  If `value` is `None`, just ensure the name is declared
     /// (creates an empty entry if needed).
@@ -736,6 +853,39 @@ impl CallGraph {
                 } else {
                     scope.defs.entry(name.to_string()).or_default();
                 }
+            }
+        }
+    }
+
+    /// Add shallow container facts to the binding of `name` in the innermost
+    /// scope that declares it.
+    fn set_containers(&mut self, name: &str, containers: &ContainerFacts) {
+        if containers.is_empty() {
+            return;
+        }
+
+        for scope_key in self.scope_stack.iter().rev() {
+            if let Some(scope) = self.scopes.get(scope_key)
+                && scope.defs.contains_key(name)
+            {
+                let scope = self.scopes.get_mut(scope_key).unwrap();
+                scope
+                    .containers
+                    .entry(name.to_string())
+                    .or_default()
+                    .union_with(containers);
+                return;
+            }
+        }
+
+        if let Some(scope_key) = self.scope_stack.last() {
+            let scope_key = scope_key.clone();
+            if let Some(scope) = self.scopes.get_mut(&scope_key) {
+                scope
+                    .containers
+                    .entry(name.to_string())
+                    .or_default()
+                    .union_with(containers);
             }
         }
     }
@@ -873,6 +1023,14 @@ impl CallGraph {
                 }
                 results
             }
+            Expr::Subscript(s) => {
+                let resolved = self.resolve_subscript_value(s);
+                if !resolved.values.is_empty() {
+                    resolved.values.iter().collect()
+                } else {
+                    self.get_obj_ids_for_expr(&s.value)
+                }
+            }
             _ => vec![],
         }
     }
@@ -895,6 +1053,16 @@ impl CallGraph {
         ValueSet::empty()
     }
 
+    /// Look up shallow container facts of a name in a specific (named) scope.
+    fn lookup_containers_in_scope(&self, ns: &str, name: &str) -> ContainerFacts {
+        if let Some(scope) = self.scopes.get(ns) {
+            if let Some(facts) = scope.containers.get(name) {
+                return facts.clone();
+            }
+        }
+        ContainerFacts::default()
+    }
+
     /// Add an attribute value to the object's scope (additive — does not
     /// overwrite existing bindings for the same attribute name).
     fn set_attribute(&mut self, expr: &ExprAttribute, value: Option<NodeId>) -> bool {
@@ -914,6 +1082,156 @@ impl CallGraph {
             }
         }
         false
+    }
+
+    fn set_attribute_shallow_value(
+        &mut self,
+        expr: &ExprAttribute,
+        value: &ShallowValue,
+    ) -> bool {
+        let (obj_node, attr_name) = self.resolve_attribute(expr);
+
+        if let Some(obj_id) = obj_node
+            && self.nodes_arena[obj_id].namespace.is_some()
+        {
+            let ns = self.nodes_arena[obj_id].get_name();
+            if let Some(scope) = self.scopes.get_mut(&ns) {
+                if !value.values.is_empty() {
+                    scope
+                        .defs
+                        .entry(attr_name.clone())
+                        .or_default()
+                        .union_with(&value.values);
+                } else {
+                    scope.defs.entry(attr_name.clone()).or_default();
+                }
+                if !value.containers.is_empty() {
+                    scope
+                        .containers
+                        .entry(attr_name)
+                        .or_default()
+                        .union_with(&value.containers);
+                }
+                return true;
+            }
+        }
+        false
+    }
+
+    fn resolve_shallow_value(&mut self, expr: &Expr) -> ShallowValue {
+        match expr {
+            Expr::Name(node) if node.ctx == ExprContext::Load => ShallowValue {
+                values: self.get_values(node.id.as_ref()),
+                containers: self.get_containers(node.id.as_ref()),
+            },
+            Expr::Attribute(node) if node.ctx == ExprContext::Load => {
+                let mut resolved = ShallowValue::default();
+                let obj_ids = self.get_obj_ids_for_expr(&node.value);
+                for obj_id in obj_ids {
+                    if self.nodes_arena[obj_id].namespace.is_none() {
+                        continue;
+                    }
+
+                    let ns = self.nodes_arena[obj_id].get_name();
+                    let attr_name = node.attr.id.to_string();
+                    let direct_values = self.lookup_values_in_scope(&ns, &attr_name);
+                    let direct_containers = self.lookup_containers_in_scope(&ns, &attr_name);
+
+                    if direct_values.is_empty() && direct_containers.is_empty() {
+                        if let Some(mro) = self.mro.get(&obj_id).cloned() {
+                            for &base_id in mro.iter().skip(1) {
+                                let base_ns = self.nodes_arena[base_id].get_name();
+                                let base_values =
+                                    self.lookup_values_in_scope(&base_ns, &attr_name);
+                                let base_containers =
+                                    self.lookup_containers_in_scope(&base_ns, &attr_name);
+                                if !base_values.is_empty() || !base_containers.is_empty() {
+                                    resolved.values.union_with(&base_values);
+                                    resolved.containers.union_with(&base_containers);
+                                    break;
+                                }
+                            }
+                        }
+                    } else {
+                        resolved.values.union_with(&direct_values);
+                        resolved.containers.union_with(&direct_containers);
+                    }
+                }
+                resolved
+            }
+            Expr::Call(node) => {
+                let mut resolved = ShallowValue::default();
+                let func_ids = self.get_obj_ids_for_expr(&node.func);
+                for func_id in func_ids {
+                    if self.class_base_ast_info.contains_key(&func_id) {
+                        resolved.values.insert(func_id);
+                    }
+                    if let Some(ret_ids) = self.function_returns.get(&func_id).cloned() {
+                        for ret_id in ret_ids {
+                            resolved.values.insert(ret_id);
+                        }
+                    }
+                }
+                resolved
+            }
+            Expr::Tuple(node) => {
+                let mut facts = ContainerFacts::default();
+                let items = node
+                    .elts
+                    .iter()
+                    .map(|elt| self.resolve_shallow_value(elt))
+                    .collect();
+                facts.push(ContainerFact::Sequence(items));
+                ShallowValue {
+                    values: ValueSet::empty(),
+                    containers: facts,
+                }
+            }
+            Expr::List(node) => {
+                let mut facts = ContainerFacts::default();
+                let items = node
+                    .elts
+                    .iter()
+                    .map(|elt| self.resolve_shallow_value(elt))
+                    .collect();
+                facts.push(ContainerFact::Sequence(items));
+                ShallowValue {
+                    values: ValueSet::empty(),
+                    containers: facts,
+                }
+            }
+            Expr::Dict(node) => {
+                let mut items = HashMap::new();
+                for item in &node.items {
+                    let Some(ref key) = item.key else {
+                        continue;
+                    };
+                    let Some(key) = literal_key_from_expr(key) else {
+                        continue;
+                    };
+                    items
+                        .entry(key)
+                        .or_insert_with(ShallowValue::default)
+                        .union_with(&self.resolve_shallow_value(&item.value));
+                }
+                let mut facts = ContainerFacts::default();
+                if !items.is_empty() {
+                    facts.push(ContainerFact::Mapping(items));
+                }
+                ShallowValue {
+                    values: ValueSet::empty(),
+                    containers: facts,
+                }
+            }
+            Expr::Subscript(node) => self.resolve_subscript_value(node),
+            _ => ShallowValue::default(),
+        }
+    }
+
+    fn resolve_subscript_value(&mut self, node: &ExprSubscript) -> ShallowValue {
+        let container = self.resolve_shallow_value(&node.value);
+        let key = literal_key_from_expr(&node.slice);
+        container.containers.resolve_subscript(key.as_ref())
     }
 
     // =====================================================================
@@ -1509,6 +1827,8 @@ impl CallGraph {
             // Fallback: visit RHS once and bind all targets to that value.
             let value_node = self.visit_expr(rhs, line_index);
             self.analyze_binding_simple(target, value_node, line_index);
+            let shallow = self.resolve_shallow_value(rhs);
+            self.bind_target_to_shallow_value(target, &shallow);
 
             // For Call RHS, visit_expr collapses multiple return candidates to
             // a single `first_ret`.  Propagate all remaining return types into
@@ -1562,8 +1882,9 @@ impl CallGraph {
             // Pre-starred slots: positional from left.
             for i in 0..n_pre {
                 if i < n_rhs {
-                    let val = self.visit_expr(rhs_elts[i], line_index);
-                    self.bind_target_to_value(targets[i], val);
+                    self.visit_expr(rhs_elts[i], line_index);
+                    let shallow = self.resolve_shallow_value(rhs_elts[i]);
+                    self.bind_target_to_shallow_value(targets[i], &shallow);
                 }
             }
 
@@ -1572,8 +1893,9 @@ impl CallGraph {
                 let t_idx = star_pos + 1 + j;
                 let r_idx = n_rhs.saturating_sub(n_post) + j;
                 if r_idx < n_rhs && r_idx >= n_pre {
-                    let val = self.visit_expr(rhs_elts[r_idx], line_index);
-                    self.bind_target_to_value(targets[t_idx], val);
+                    self.visit_expr(rhs_elts[r_idx], line_index);
+                    let shallow = self.resolve_shallow_value(rhs_elts[r_idx]);
+                    self.bind_target_to_shallow_value(targets[t_idx], &shallow);
                 }
             }
 
@@ -1583,16 +1905,18 @@ impl CallGraph {
                 let middle_end = n_rhs.saturating_sub(n_post);
                 let inner = &*starred.value;
                 for i in middle_start..middle_end {
-                    let val = self.visit_expr(rhs_elts[i], line_index);
-                    self.bind_target_to_value(inner, val);
+                    self.visit_expr(rhs_elts[i], line_index);
+                    let shallow = self.resolve_shallow_value(rhs_elts[i]);
+                    self.bind_target_to_shallow_value(inner, &shallow);
                 }
             }
         } else {
             // No starred: simple one-to-one positional matching.
             for (i, &tgt) in targets.iter().enumerate() {
                 if i < n_rhs {
-                    let val = self.visit_expr(rhs_elts[i], line_index);
-                    self.bind_target_to_value(tgt, val);
+                    self.visit_expr(rhs_elts[i], line_index);
+                    let shallow = self.resolve_shallow_value(rhs_elts[i]);
+                    self.bind_target_to_shallow_value(tgt, &shallow);
                 }
             }
         }
@@ -1607,6 +1931,8 @@ impl CallGraph {
         if let Some(ref value) = node.value {
             let value_node = self.visit_expr(value, line_index);
             self.analyze_binding_simple(&node.target, value_node, line_index);
+            let shallow = self.resolve_shallow_value(value);
+            self.bind_target_to_shallow_value(&node.target, &shallow);
         } else {
             // Just a type declaration
             self.bind_target_to_value(&node.target, None);
@@ -1894,9 +2220,16 @@ impl CallGraph {
                 None
             }
             Expr::Subscript(node) => {
+                let resolved = self.resolve_subscript_value(node);
+                if !resolved.values.is_empty() {
+                    let from_node = self.get_node_of_current_namespace();
+                    for to in resolved.values.iter() {
+                        self.add_uses_edge(from_node, to);
+                    }
+                }
                 let val = self.visit_expr(&node.value, line_index);
                 self.visit_expr(&node.slice, line_index);
-                val
+                resolved.first_value().or(val)
             }
             Expr::Starred(node) => self.visit_expr(&node.value, line_index),
             Expr::Await(node) => self.visit_expr(&node.value, line_index),
@@ -1930,6 +2263,8 @@ impl CallGraph {
             Expr::Named(node) => {
                 let val = self.visit_expr(&node.value, line_index);
                 self.bind_target_to_value(&node.target, val);
+                let shallow = self.resolve_shallow_value(&node.value);
+                self.bind_target_to_shallow_value(&node.target, &shallow);
                 val
             }
             Expr::FString(node) => {
@@ -2475,6 +2810,35 @@ impl CallGraph {
         }
     }
 
+    fn bind_target_to_shallow_value(&mut self, target: &Expr, value: &ShallowValue) {
+        match target {
+            Expr::Name(n) => {
+                self.set_value(n.id.as_ref(), value.first_value());
+                self.set_containers(n.id.as_ref(), &value.containers);
+                for id in value.values.iter().skip(1) {
+                    self.set_value(n.id.as_ref(), Some(id));
+                }
+            }
+            Expr::Attribute(a) => {
+                self.set_attribute_shallow_value(a, value);
+            }
+            Expr::Tuple(t) => {
+                for elt in &t.elts {
+                    self.bind_target_to_shallow_value(elt, value);
+                }
+            }
+            Expr::List(l) => {
+                for elt in &l.elts {
+                    self.bind_target_to_shallow_value(elt, value);
+                }
+            }
+            Expr::Starred(s) => {
+                self.bind_target_to_shallow_value(&s.value, value);
+            }
+            _ => {}
+        }
+    }
+
     // =====================================================================
     // Builtin resolution
     // =====================================================================
@@ -3005,6 +3369,26 @@ fn collect_target_names_from_expr(target: &Expr, names: &mut HashSet<String>) {
             collect_target_names_from_expr(&s.value, names);
         }
         _ => {}
+    }
+}
+
+/// Extract a small literal key we can use for shallow subscript resolution.
+fn literal_key_from_expr(expr: &Expr) -> Option<LiteralKey> {
+    match expr {
+        Expr::StringLiteral(s) => Some(LiteralKey::String(s.value.to_str().to_string())),
+        Expr::NumberLiteral(n) => match &n.value {
+            Number::Int(i) => i.as_i64().map(LiteralKey::Int),
+            Number::Float(_) | Number::Complex { .. } => None,
+        },
+        Expr::UnaryOp(u) if matches!(u.op, UnaryOp::USub) => {
+            if let Expr::NumberLiteral(n) = u.operand.as_ref() {
+                if let Number::Int(i) = &n.value {
+                    return i.as_i64().and_then(|value| value.checked_neg()).map(LiteralKey::Int);
+                }
+            }
+            None
+        }
+        _ => None,
     }
 }
 

@@ -6,3 +6,12 @@
 /pyan/
 /PyCG/
 /benchmarks/corpora/
+
+# Generated local benchmark outputs
+/benchmarks/results/*.json
+/benchmarks/results/**/*.json
+
+# Local Codex/Hive state
+/.hive/
+/.hive-home/
+/.worktrees/

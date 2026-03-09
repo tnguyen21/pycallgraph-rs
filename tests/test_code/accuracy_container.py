@@ -22,6 +22,16 @@ def func_c():
     pass
 
 
+class HandlerA:
+    def handle_a(self):
+        pass
+
+
+class HandlerB:
+    def handle_b(self):
+        pass
+
+
 def list_subscript_caller():
     """Call via subscript on a function list — both func_a and func_b must be tracked."""
     funcs = [func_a, func_b]
@@ -34,3 +44,17 @@ def dict_subscript_caller():
     dispatch = {"a": func_a, "c": func_c}
     dispatch["a"]()
     dispatch["c"]()
+
+
+def list_subscript_method_caller():
+    """Method lookup should flow through the indexed object, not the list binding."""
+    handlers = [HandlerA(), HandlerB()]
+    handlers[0].handle_a()
+    handlers[1].handle_b()
+
+
+def dict_subscript_method_caller():
+    """Method lookup should flow through the keyed object, not the dict binding."""
+    handlers = {"a": HandlerA(), "b": HandlerB()}
+    handlers["a"].handle_a()
+    handlers["b"].handle_b()
