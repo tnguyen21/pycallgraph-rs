@@ -137,13 +137,19 @@ This is idempotent and safe to re-run. After cloning, `cargo test` will include 
 
 ## Performance
 
-~7x faster than Python pyan3 on real-world codebases. On the pyan3 source tree (10 files, ~4200 LOC):
+Wall-clock comparison against [code2flow](https://github.com/scottrogowski/code2flow) (v2.5.1) on real-world codebases. Both tools produce DOT output; timings include process startup. Measured on Apple M4 Pro, 5 runs after 1 warmup, interleaved tool order per round.
 
-| | Median |
-|---|---|
-| Python pyan3 | 220ms |
-| pycg | 31ms (wall clock incl. process startup) |
-| pycallgraph-rs (library, no startup) | ~10ms |
+| Corpus | Files | pycg | code2flow | Speedup |
+|--------|------:|-----:|----------:|--------:|
+| requests | 18 | 14ms | 74ms | 5.4x |
+| flask | 24 | 20ms | 94ms | 4.8x |
+| black | 25 | 33ms | 161ms | 4.9x |
+| httpx | 23 | 23ms | 111ms | 4.8x |
+| rich | 78 | 63ms | 434ms | 6.9x |
+
+These tools are not equivalent — pycg performs deeper static analysis (MRO resolution, return-value propagation, protocol edges) while code2flow does lightweight control-flow extraction. The comparison is wall-clock only and says nothing about output quality.
+
+To reproduce: `./benchmarks/setup.sh && python3 benchmarks/bench.py` (requires the `benchmarks` branch corpora).
 
 ## Differences from pyan3
 
