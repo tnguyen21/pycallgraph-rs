@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::path::PathBuf;
 
 use anyhow::{bail, Result};
@@ -129,6 +130,11 @@ fn main() -> Result<()> {
         Format::Text => writer::write_text(&vg),
     };
 
-    print!("{output}");
+    let mut stdout = std::io::stdout().lock();
+    if let Err(e) = stdout.write_all(output.as_bytes()) {
+        if e.kind() != std::io::ErrorKind::BrokenPipe {
+            return Err(e.into());
+        }
+    }
     Ok(())
 }

@@ -165,6 +165,7 @@ pub fn make_safe_label(name: &str) -> String {
         out = out.replace(word, &format!("{word}X"));
     }
     out = out.replace('.', "__");
+    out = out.replace('-', "_");
     out = out.replace('*', "");
     out
 }
@@ -491,6 +492,7 @@ mod tests {
         assert_eq!(make_safe_label("my.graph.node"), "my__graphX__nodeX");
         assert_eq!(make_safe_label("digraph"), "digraphXX");
         assert_eq!(make_safe_label("foo*bar"), "foobar");
+        assert_eq!(make_safe_label("my-package.mod"), "my_package__mod");
     }
 
     #[test]
