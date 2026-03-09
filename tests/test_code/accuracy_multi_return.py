@@ -25,7 +25,17 @@ def choose(flag):
         return B()
 
 
+def wrap(flag):
+    """Returns choose(flag) unchanged — nested return propagation must stay precise."""
+    return choose(flag)
+
+
 def multi_return_caller(flag):
     """Calls choose() and invokes .method() — both A.method and B.method must be reachable."""
     obj = choose(flag)
     obj.method()
+
+
+def wrapped_multi_return_caller(flag):
+    """Calls wrap() then .method() — nested return propagation must preserve both classes."""
+    wrap(flag).method()

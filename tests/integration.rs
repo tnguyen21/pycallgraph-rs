@@ -821,11 +821,16 @@ fn test_accuracy_simple_decorator_applied() {
 
 #[test]
 fn test_accuracy_factory_decorator_applied() {
-    // @factory_decorator("arg") — module must use factory_decorator.
+    // @factory_decorator("arg") — module must use the outer factory, and the
+    // returned inner decorator must be what applies to factory_decorated.
     let cg = make_single_fixture_graph("accuracy_decorator.py");
     assert!(
         has_uses_edge(&cg, "accuracy_decorator", "factory_decorator"),
         "module should use factory_decorator (applied as @factory_decorator(...))"
+    );
+    assert!(
+        has_uses_edge(&cg, "decorator", "factory_decorated"),
+        "the inner decorator returned by factory_decorator should use factory_decorated"
     );
 }
 
@@ -1250,6 +1255,36 @@ fn test_accuracy_multi_return_both_methods_reachable() {
     );
 }
 
+#[test]
+fn test_accuracy_nested_multi_return_wrapper_preserves_all_candidates() {
+    let cg = make_single_fixture_graph("accuracy_multi_return.py");
+    assert!(
+        has_uses_edge(&cg, "wrapped_multi_return_caller", "wrap"),
+        "wrapped_multi_return_caller should use wrap (direct call)"
+    );
+    assert!(
+        has_uses_edge(&cg, "wrap", "choose"),
+        "wrap should use choose when returning choose(flag)"
+    );
+    let caller_ids = find_nodes_by_name(&cg, "wrapped_multi_return_caller");
+    let method_nodes: Vec<usize> = find_nodes_by_name(&cg, "method")
+        .into_iter()
+        .filter(|&id| {
+            caller_ids.iter().any(|&cid| {
+                cg.uses_edges
+                    .get(&cid)
+                    .is_some_and(|targets| targets.contains(&id))
+            })
+        })
+        .collect();
+    assert!(
+        method_nodes.len() >= 2,
+        "wrapped_multi_return_caller should use method from both A and B through wrap(flag), \
+         found {} method node(s)",
+        method_nodes.len()
+    );
+}
+
 // Accuracy harness — ValueSet binding model
 //
 // These tests verify the invariants introduced by replacing single-value
@@ -1516,9 +1551,10 @@ fn test_inv3_reexport_no_spurious_fanout() {
         uses.contains("reexport_func"),
         "reexport_caller must use reexport_func, got: {uses:?}"
     );
-    assert!(
-        uses.len() <= 3,
-        "reexport_caller has unexpected extra uses edges (noise explosion): {uses:?}"
+    assert_eq!(
+        uses,
+        HashSet::from([String::from("reexport_func")]),
+        "reexport_caller should only use reexport_func in this fixture"
     );
 }
 

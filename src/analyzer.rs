@@ -1279,10 +1279,16 @@ impl CallGraph {
             Stmt::Return(node) => {
                 if let Some(ref value) = node.value {
                     let ret_val = self.visit_expr(value, line_index);
+                    let mut ret_ids: Vec<NodeId> = self.resolve_shallow_value(value).values.iter().collect();
+                    if let Some(ret_id) = ret_val
+                        && !ret_ids.contains(&ret_id)
+                    {
+                        ret_ids.push(ret_id);
+                    }
                     // Track return value for the enclosing function/method.
                     // Skip argument sentinels and unknown wildcard nodes —
                     // they don't carry useful type information.
-                    if let Some(ret_id) = ret_val {
+                    for ret_id in ret_ids {
                         let is_sentinel = self.nodes_arena[ret_id].name.contains("^^^argument^^^");
                         let is_unknown = self.nodes_arena[ret_id].namespace.is_none();
                         if !is_sentinel && !is_unknown {
