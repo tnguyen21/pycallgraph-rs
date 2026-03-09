@@ -973,10 +973,11 @@ fn test_accuracy_starred_unpack_constructors_tracked() {
     assert!(has_uses_edge(&cg, "star_at_start", "Gamma"), "star_at_start must use Gamma");
 }
 
-/// GAP: method calls on positionally-bound starred-unpack targets are not
-/// Method calls on positionally-bound starred-unpack targets now resolve.
-/// `a, b, *c = Alpha(), Beta(), ...; a.alpha_method()` — `a` is bound to
-/// Alpha() and its method calls are tracked via return-value propagation.
+/// Positional starred-unpack targets resolve the correct class's methods.
+///
+/// `a, b, *c = Alpha(), Beta(), Gamma(), Delta()` binds `a` to Alpha and `b`
+/// to Beta via positional matching.  Method calls on those targets must emit
+/// uses edges to the *correct* class methods, not to a same-value approximation.
 #[test]
 fn test_accuracy_starred_unpack_explicit_target_methods() {
     let cg = make_features_graph();
@@ -987,6 +988,76 @@ fn test_accuracy_starred_unpack_explicit_target_methods() {
     assert!(
         has_uses_edge(&cg, "star_at_end", "beta_method"),
         "star_at_end should use beta_method via b.beta_method() (b = Beta())"
+    );
+}
+
+/// INV-1: positional unpacking binds each target to the correct class node,
+/// not to a collapsed same-value approximation of the whole RHS.
+///
+/// Verifies that `a, b, *c = Alpha(), Beta(), Gamma(), Delta()` binds `a`
+/// specifically to the Alpha class by checking that the uses edge for
+/// `alpha_method` points into Alpha's namespace (not Delta's).
+#[test]
+fn test_positional_unpack_correct_class_binding() {
+    let cg = make_features_graph();
+
+    // Find all nodes named "alpha_method" that live in the Alpha class namespace.
+    let alpha_method_in_alpha: Vec<usize> = find_nodes_by_name(&cg, "alpha_method")
+        .into_iter()
+        .filter(|&id| {
+            cg.nodes_arena[id]
+                .namespace
+                .as_deref()
+                .unwrap_or("")
+                .contains("Alpha")
+        })
+        .collect();
+    assert!(
+        !alpha_method_in_alpha.is_empty(),
+        "Alpha.alpha_method node must exist"
+    );
+
+    // star_at_end uses Alpha.alpha_method specifically (positional binding a → Alpha).
+    let star_at_end_ids = find_nodes_by_name(&cg, "star_at_end");
+    assert!(!star_at_end_ids.is_empty(), "star_at_end must exist");
+    let uses_alpha_method = alpha_method_in_alpha.iter().any(|&mid| {
+        star_at_end_ids.iter().any(|&fid| {
+            cg.uses_edges
+                .get(&fid)
+                .is_some_and(|targets| targets.contains(&mid))
+        })
+    });
+    assert!(
+        uses_alpha_method,
+        "star_at_end should use Alpha.alpha_method specifically (a bound to Alpha via positional unpacking)"
+    );
+
+    // Verify star_in_middle: c is Delta (last positional), calls c.delta_method().
+    let delta_method_in_delta: Vec<usize> = find_nodes_by_name(&cg, "delta_method")
+        .into_iter()
+        .filter(|&id| {
+            cg.nodes_arena[id]
+                .namespace
+                .as_deref()
+                .unwrap_or("")
+                .contains("Delta")
+        })
+        .collect();
+    assert!(
+        !delta_method_in_delta.is_empty(),
+        "Delta.delta_method node must exist"
+    );
+    let star_in_middle_ids = find_nodes_by_name(&cg, "star_in_middle");
+    let uses_delta_method = delta_method_in_delta.iter().any(|&mid| {
+        star_in_middle_ids.iter().any(|&fid| {
+            cg.uses_edges
+                .get(&fid)
+                .is_some_and(|targets| targets.contains(&mid))
+        })
+    });
+    assert!(
+        uses_delta_method,
+        "star_in_middle should use Delta.delta_method specifically (c bound to Delta via positional unpacking)"
     );
 }
 

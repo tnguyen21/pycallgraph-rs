@@ -1308,9 +1308,100 @@ impl CallGraph {
     }
 
     fn visit_assign(&mut self, node: &StmtAssign, line_index: &LineIndex) {
-        let value_node = self.visit_expr(&node.value, line_index);
         for target in &node.targets {
+            self.analyze_binding_with_rhs(target, &node.value, line_index);
+        }
+    }
+
+    /// Bind a target expression using the RHS expression directly.
+    ///
+    /// When both target and RHS are tuple/list literals, performs positional
+    /// matching (including starred unpacking) so each target gets its own
+    /// precise value rather than the same collapsed approximation.
+    ///
+    /// Falls back to the simple one-value binding for non-literal RHS or
+    /// when only the LHS is a tuple/list.
+    fn analyze_binding_with_rhs(&mut self, target: &Expr, rhs: &Expr, line_index: &LineIndex) {
+        let target_elts: Option<Vec<&Expr>> = match target {
+            Expr::Tuple(t) => Some(t.elts.iter().collect()),
+            Expr::List(t) => Some(t.elts.iter().collect()),
+            _ => None,
+        };
+        let rhs_elts: Option<Vec<&Expr>> = match rhs {
+            Expr::Tuple(r) => Some(r.elts.iter().collect()),
+            Expr::List(r) => Some(r.elts.iter().collect()),
+            _ => None,
+        };
+
+        if let (Some(targets), Some(rhs_elts)) = (target_elts, rhs_elts) {
+            // Both sides are tuple/list literals: do positional matching.
+            self.bind_positional_tuple_elts(&targets, &rhs_elts, line_index);
+        } else {
+            // Fallback: visit RHS once and bind all targets to that value.
+            let value_node = self.visit_expr(rhs, line_index);
             self.analyze_binding_simple(target, value_node, line_index);
+        }
+    }
+
+    /// Positional matching of target slots to RHS elements, handling starred (`*`) targets.
+    ///
+    /// Algorithm:
+    /// - Non-starred targets before `*` → match RHS from the left.
+    /// - Non-starred targets after  `*` → match RHS from the right.
+    /// - Starred target              `*` → union of all middle RHS elements.
+    /// - Without any starred target    → plain one-to-one positional match.
+    ///
+    /// Each matched RHS element is individually visited (to produce uses edges)
+    /// and then bound to the corresponding target slot.
+    fn bind_positional_tuple_elts(
+        &mut self,
+        targets: &[&Expr],
+        rhs_elts: &[&Expr],
+        line_index: &LineIndex,
+    ) {
+        let n_rhs = rhs_elts.len();
+        let star_idx = targets.iter().position(|e| matches!(*e, Expr::Starred(_)));
+
+        if let Some(star_pos) = star_idx {
+            let n_pre = star_pos;
+            let n_post = targets.len() - star_pos - 1;
+
+            // Pre-starred slots: positional from left.
+            for i in 0..n_pre {
+                if i < n_rhs {
+                    let val = self.visit_expr(rhs_elts[i], line_index);
+                    self.bind_target_to_value(targets[i], val);
+                }
+            }
+
+            // Post-starred slots: positional from right.
+            for j in 0..n_post {
+                let t_idx = star_pos + 1 + j;
+                let r_idx = n_rhs.saturating_sub(n_post) + j;
+                if r_idx < n_rhs && r_idx >= n_pre {
+                    let val = self.visit_expr(rhs_elts[r_idx], line_index);
+                    self.bind_target_to_value(targets[t_idx], val);
+                }
+            }
+
+            // Starred slot: union of all middle elements.
+            if let Expr::Starred(starred) = targets[star_pos] {
+                let middle_start = n_pre;
+                let middle_end = n_rhs.saturating_sub(n_post);
+                let inner = &*starred.value;
+                for i in middle_start..middle_end {
+                    let val = self.visit_expr(rhs_elts[i], line_index);
+                    self.bind_target_to_value(inner, val);
+                }
+            }
+        } else {
+            // No starred: simple one-to-one positional matching.
+            for (i, &tgt) in targets.iter().enumerate() {
+                if i < n_rhs {
+                    let val = self.visit_expr(rhs_elts[i], line_index);
+                    self.bind_target_to_value(tgt, val);
+                }
+            }
         }
     }
 
