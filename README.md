@@ -84,7 +84,7 @@ cargo build --release
 cargo test
 ```
 
-38 tests: 18 unit tests covering graph construction, coloring, and output formatting; 20 integration tests using Python fixture files covering core analysis, decorators, inheritance, output formats, regression cases, and corpus-scale smoke tests.
+45 tests: 18 unit tests covering graph construction, coloring, and output formatting; 27 integration tests using Python fixture files covering core analysis, decorators, inheritance, output formats, regression cases, iterator/context-manager protocol edges, and corpus-scale smoke tests.
 
 Corpus-scale smoke tests run the full analysis pipeline over vendored real-world packages (`requests`, `flask`, `rich`) and assert non-degenerate graph statistics. They skip automatically when the corpora are absent (e.g. in fresh clones), so `cargo test` stays green without them.
 
@@ -104,8 +104,6 @@ This is an MVP port. Not yet implemented:
 
 - PyO3 Python bindings
 - Module-level dependency analysis mode
-- Context manager protocol edges (`__enter__`/`__exit__`, `__aenter__`/`__aexit__`)
-- Iterator protocol edges (`__iter__`/`__next__`, `__aiter__`/`__anext__`)
 - `del` statement protocol edges (`__delattr__`/`__delitem__`)
 
 ## License
