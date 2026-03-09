@@ -1211,6 +1211,18 @@ impl CallGraph {
 
         let iter_node = self.visit_expr(&node.iter, line_index);
 
+        // Emit iterator protocol edges when iterating over a known class instance.
+        if let Some(obj_id) = iter_node
+            && self.class_base_ast_info.contains_key(&obj_id)
+        {
+            let methods: &[&str] = if node.is_async {
+                &["__aiter__", "__anext__"]
+            } else {
+                &["__iter__", "__next__"]
+            };
+            self.emit_protocol_edges(obj_id, methods);
+        }
+
         // Bind target to iter value
         self.analyze_binding_simple(&node.target, iter_node, line_index);
 
@@ -1250,6 +1262,18 @@ impl CallGraph {
     fn visit_with(&mut self, node: &StmtWith, line_index: &LineIndex) {
         for item in &node.items {
             let cm_node = self.visit_expr(&item.context_expr, line_index);
+
+            // Emit context-manager protocol edges when the CM is a known class instance.
+            if let Some(obj_id) = cm_node
+                && self.class_base_ast_info.contains_key(&obj_id)
+            {
+                let methods: &[&str] = if node.is_async {
+                    &["__aenter__", "__aexit__"]
+                } else {
+                    &["__enter__", "__exit__"]
+                };
+                self.emit_protocol_edges(obj_id, methods);
+            }
 
             if let Some(ref vars) = item.optional_vars {
                 if let Expr::Name(_) = vars.as_ref() {
@@ -1715,6 +1739,49 @@ impl CallGraph {
         self.analyze_comprehension(&node.generators, Some(&node.elt), None, "genexpr", line_index)
     }
 
+    /// Emit uses edges for Python protocol dunder methods on a known class/instance.
+    ///
+    /// `obj_id` must be the NodeId that the iterated or context expression resolves to.
+    /// Only emits edges when `obj_id` is a class we analysed (present in
+    /// `class_base_ast_info`).  Each method in `method_names` is looked up first
+    /// directly in the class scope, then through the MRO chain.
+    fn emit_protocol_edges(&mut self, obj_id: NodeId, method_names: &[&str]) {
+        let from_node = self.get_node_of_current_namespace();
+        let class_ns = self.nodes_arena[obj_id].get_name();
+
+        for &method_name in method_names {
+            // Direct lookup in the class scope.
+            if let Some(method_id) = self.lookup_in_scope(&class_ns, method_name) {
+                if self.add_uses_edge(from_node, method_id) {
+                    info!(
+                        "New edge added for Use from {} to {} (protocol: {})",
+                        self.nodes_arena[from_node].get_name(),
+                        self.nodes_arena[method_id].get_name(),
+                        method_name
+                    );
+                }
+            } else {
+                // Fall back to MRO chain.
+                if let Some(mro) = self.mro.get(&obj_id).cloned() {
+                    for &base_id in mro.iter().skip(1) {
+                        let base_ns = self.nodes_arena[base_id].get_name();
+                        if let Some(method_id) = self.lookup_in_scope(&base_ns, method_name) {
+                            if self.add_uses_edge(from_node, method_id) {
+                                info!(
+                                    "New edge added for Use from {} to {} (protocol via MRO: {})",
+                                    self.nodes_arena[from_node].get_name(),
+                                    self.nodes_arena[method_id].get_name(),
+                                    method_name
+                                );
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     fn analyze_comprehension(
         &mut self,
         generators: &[Comprehension],
@@ -1731,6 +1798,18 @@ impl CallGraph {
 
         // Evaluate outermost iterator in current scope
         let iter_node = self.visit_expr(&outermost.iter, line_index);
+
+        // Emit iterator protocol edges from the enclosing function scope.
+        if let Some(obj_id) = iter_node
+            && self.class_base_ast_info.contains_key(&obj_id)
+        {
+            let methods: &[&str] = if outermost.is_async {
+                &["__aiter__", "__anext__"]
+            } else {
+                &["__iter__", "__next__"]
+            };
+            self.emit_protocol_edges(obj_id, methods);
+        }
 
         // Ensure comprehension scope exists
         let parent_ns = {
@@ -1760,6 +1839,17 @@ impl CallGraph {
         // Process remaining generators
         for comp in generators.iter().skip(1) {
             let val = self.visit_expr(&comp.iter, line_index);
+            // Emit iterator protocol edges for each inner generator.
+            if let Some(obj_id) = val
+                && self.class_base_ast_info.contains_key(&obj_id)
+            {
+                let methods: &[&str] = if comp.is_async {
+                    &["__aiter__", "__anext__"]
+                } else {
+                    &["__iter__", "__next__"]
+                };
+                self.emit_protocol_edges(obj_id, methods);
+            }
             self.analyze_binding_simple(&comp.target, val, line_index);
             for if_expr in &comp.ifs {
                 self.visit_expr(if_expr, line_index);
