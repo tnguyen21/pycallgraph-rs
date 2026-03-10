@@ -1,4 +1,4 @@
-# pycallgraph-rs
+# pycg-rs
 
 A Rust reimplementation of [pyan3](https://github.com/Technologicat/pyan) — a static call graph generator for Python programs.
 

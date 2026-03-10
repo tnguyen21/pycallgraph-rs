@@ -1,14 +1,15 @@
 [package]
-name = "pycallgraph-rs"
+name = "pycg-rs"
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
 
 [[bin]]
 name = "pycg"
 path = "src/main.rs"
 
 [lib]
-name = "pycallgraph_rs"
+name = "pycg_rs"
 path = "src/lib.rs"
 
 [dependencies]

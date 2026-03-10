@@ -5,9 +5,9 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-use pycallgraph_rs::analyzer::CallGraph;
-use pycallgraph_rs::visgraph::{VisualGraph, VisualOptions};
-use pycallgraph_rs::writer;
+use pycg_rs::analyzer::CallGraph;
+use pycg_rs::visgraph::{VisualGraph, VisualOptions};
+use pycg_rs::writer;
 
 fn test_code_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -115,7 +115,7 @@ fn has_uses_edge(cg: &CallGraph, from_name: &str, to_name: &str) -> bool {
 fn test_modules_found() {
     let cg = make_call_graph(&test_code_dir());
     let module_names: Vec<_> = cg.nodes_arena.iter()
-        .filter(|n| n.flavor == pycallgraph_rs::node::Flavor::Module)
+        .filter(|n| n.flavor == pycg_rs::node::Flavor::Module)
         .map(|n| n.get_name())
         .collect();
     assert!(module_names.iter().any(|n| n.contains("submodule1")), "submodule1 not found");
@@ -126,7 +126,7 @@ fn test_modules_found() {
 fn test_class_found() {
     let cg = make_call_graph(&test_code_dir());
     let classes: Vec<_> = cg.nodes_arena.iter()
-        .filter(|n| n.flavor == pycallgraph_rs::node::Flavor::Class)
+        .filter(|n| n.flavor == pycg_rs::node::Flavor::Class)
         .map(|n| n.name.clone())
         .collect();
     assert!(classes.contains(&"A".to_string()), "Class A not found, got: {:?}", classes);
@@ -136,7 +136,7 @@ fn test_class_found() {
 fn test_function_found() {
     let cg = make_call_graph(&test_code_dir());
     let functions: Vec<_> = cg.nodes_arena.iter()
-        .filter(|n| matches!(n.flavor, pycallgraph_rs::node::Flavor::Function | pycallgraph_rs::node::Flavor::Method))
+        .filter(|n| matches!(n.flavor, pycg_rs::node::Flavor::Function | pycg_rs::node::Flavor::Method))
         .map(|n| n.name.clone())
         .collect();
     assert!(functions.contains(&"test_func1".to_string()), "test_func1 not found, got: {:?}", functions);
@@ -315,7 +315,7 @@ fn test_regression_annotated_assignments() {
     assert!(!cg.nodes_arena.is_empty(), "issue2: graph should not be empty");
     let fn_names: Vec<_> = cg.nodes_arena.iter()
         .filter(|n| matches!(n.flavor,
-            pycallgraph_rs::node::Flavor::Function | pycallgraph_rs::node::Flavor::Method))
+            pycg_rs::node::Flavor::Function | pycg_rs::node::Flavor::Method))
         .map(|n| n.name.as_str())
         .collect();
     assert!(fn_names.contains(&"annotated_fn"),
@@ -332,7 +332,7 @@ fn test_regression_comprehensions() {
         .expect("issue3: comprehensions must not crash the analyzer");
     let fn_names: Vec<_> = cg.nodes_arena.iter()
         .filter(|n| matches!(n.flavor,
-            pycallgraph_rs::node::Flavor::Function | pycallgraph_rs::node::Flavor::Method))
+            pycg_rs::node::Flavor::Function | pycg_rs::node::Flavor::Method))
         .map(|n| n.name.as_str())
         .collect();
     assert!(fn_names.contains(&"f"), "issue3: function f not found, got: {fn_names:?}");
@@ -349,7 +349,7 @@ fn test_regression_external_deps() {
     let cg = CallGraph::new(&files, None)
         .expect("issue5: external-dep imports must not crash the analyzer");
     let class_names: Vec<_> = cg.nodes_arena.iter()
-        .filter(|n| n.flavor == pycallgraph_rs::node::Flavor::Class)
+        .filter(|n| n.flavor == pycg_rs::node::Flavor::Class)
         .map(|n| n.name.as_str())
         .collect();
     assert!(class_names.contains(&"MyProcessor"),
@@ -373,7 +373,7 @@ fn make_features_graph() -> CallGraph {
 fn test_features_classes_found() {
     let cg = make_features_graph();
     let class_names: HashSet<_> = cg.nodes_arena.iter()
-        .filter(|n| n.flavor == pycallgraph_rs::node::Flavor::Class)
+        .filter(|n| n.flavor == pycg_rs::node::Flavor::Class)
         .map(|n| n.name.as_str())
         .collect();
     for expected in ["Decorated", "Base", "Derived", "MixinA", "MixinB", "Combined"] {
@@ -390,12 +390,12 @@ fn test_features_decorators() {
     assert!(has_defines_edge(&cg, "Decorated", "regular"));
 
     let sm: Vec<_> = find_nodes_by_name(&cg, "static_method").into_iter()
-        .filter(|&id| cg.nodes_arena[id].flavor == pycallgraph_rs::node::Flavor::StaticMethod)
+        .filter(|&id| cg.nodes_arena[id].flavor == pycg_rs::node::Flavor::StaticMethod)
         .collect();
     assert!(!sm.is_empty(), "static_method should have StaticMethod flavor");
 
     let cm: Vec<_> = find_nodes_by_name(&cg, "class_method").into_iter()
-        .filter(|&id| cg.nodes_arena[id].flavor == pycallgraph_rs::node::Flavor::ClassMethod)
+        .filter(|&id| cg.nodes_arena[id].flavor == pycg_rs::node::Flavor::ClassMethod)
         .collect();
     assert!(!cm.is_empty(), "class_method should have ClassMethod flavor");
 }
@@ -788,7 +788,7 @@ fn test_postprocess_changes_graph() {
     let cg = make_call_graph(&test_code_dir());
     let module_count = cg.nodes_arena.iter()
         .enumerate()
-        .filter(|(id, n)| n.flavor == pycallgraph_rs::node::Flavor::Module && cg.defined.contains(id))
+        .filter(|(id, n)| n.flavor == pycg_rs::node::Flavor::Module && cg.defined.contains(id))
         .count();
     assert!(module_count >= 3, "postprocessing should keep module nodes defined, got {module_count}");
 }
@@ -834,7 +834,7 @@ fn test_visit_import_produces_module_edge() {
 
 #[test]
 fn test_get_module_name_with_root() {
-    use pycallgraph_rs::analyzer::get_module_name;
+    use pycg_rs::analyzer::get_module_name;
     let tc = test_code_dir();
     let root = tc.parent().unwrap().to_string_lossy().to_string();
     let file = tc.join("features.py").to_string_lossy().to_string();
@@ -844,7 +844,7 @@ fn test_get_module_name_with_root() {
 
 #[test]
 fn test_get_module_name_init_file() {
-    use pycallgraph_rs::analyzer::get_module_name;
+    use pycg_rs::analyzer::get_module_name;
     let tc = test_code_dir();
     let root = tc.parent().unwrap().to_string_lossy().to_string();
     let file = tc.join("subpackage1").join("__init__.py").to_string_lossy().to_string();
@@ -854,7 +854,7 @@ fn test_get_module_name_init_file() {
 
 #[test]
 fn test_get_module_name_nested() {
-    use pycallgraph_rs::analyzer::get_module_name;
+    use pycg_rs::analyzer::get_module_name;
     let tc = test_code_dir();
     let root = tc.parent().unwrap().to_string_lossy().to_string();
     let file = tc.join("subpackage1").join("submodule1.py").to_string_lossy().to_string();
@@ -864,7 +864,7 @@ fn test_get_module_name_nested() {
 
 #[test]
 fn test_get_module_name_no_root() {
-    use pycallgraph_rs::analyzer::get_module_name;
+    use pycg_rs::analyzer::get_module_name;
     let tc = test_code_dir();
     let file = tc.join("subpackage1").join("submodule1.py").to_string_lossy().to_string();
     let name = get_module_name(&file, None);
@@ -879,7 +879,7 @@ fn test_get_module_name_no_root() {
 
 #[test]
 fn test_node_equality_and_hash() {
-    use pycallgraph_rs::node::{Node, Flavor};
+    use pycg_rs::node::{Node, Flavor};
     use std::collections::HashSet;
 
     let a = Node::new(Some("pkg"), "Foo", Flavor::Class);
@@ -899,7 +899,7 @@ fn test_node_equality_and_hash() {
 
 #[test]
 fn test_node_display_and_short_name() {
-    use pycallgraph_rs::node::{Node, Flavor};
+    use pycg_rs::node::{Node, Flavor};
 
     let n = Node::new(Some("pkg.sub"), "func", Flavor::Function);
     assert_eq!(format!("{n}"), "pkg.sub.func");
@@ -913,7 +913,7 @@ fn test_node_display_and_short_name() {
 
 #[test]
 fn test_node_specificity_ordering() {
-    use pycallgraph_rs::node::Flavor;
+    use pycg_rs::node::Flavor;
 
     // More specific flavors must have higher specificity
     assert!(Flavor::Function.specificity() > Flavor::Module.specificity());
@@ -925,7 +925,7 @@ fn test_node_specificity_ordering() {
 
 #[test]
 fn test_flavor_display() {
-    use pycallgraph_rs::node::Flavor;
+    use pycg_rs::node::Flavor;
 
     assert_eq!(format!("{}", Flavor::Module), "module");
     assert_eq!(format!("{}", Flavor::Function), "function");
@@ -1037,7 +1037,7 @@ fn test_dot_grouped_subgraph_indent() {
 
 #[test]
 fn test_hls_to_rgb_varied() {
-    use pycallgraph_rs::visgraph::{hls_to_rgb, rgb_hex, rgba_hex};
+    use pycg_rs::visgraph::{hls_to_rgb, rgb_hex, rgba_hex};
 
     // Green (h=0.333)
     let (r, g, b) = hls_to_rgb(0.333, 0.5, 1.0);
@@ -1146,12 +1146,12 @@ fn analyze_corpus(dir: &std::path::Path) -> (CallGraph, CorpusStats) {
     let modules = cg
         .nodes_arena
         .iter()
-        .filter(|n| n.flavor == pycallgraph_rs::node::Flavor::Module)
+        .filter(|n| n.flavor == pycg_rs::node::Flavor::Module)
         .count();
     let classes = cg
         .nodes_arena
         .iter()
-        .filter(|n| n.flavor == pycallgraph_rs::node::Flavor::Class)
+        .filter(|n| n.flavor == pycg_rs::node::Flavor::Class)
         .count();
     let functions = cg
         .nodes_arena
@@ -1159,10 +1159,10 @@ fn analyze_corpus(dir: &std::path::Path) -> (CallGraph, CorpusStats) {
         .filter(|n| {
             matches!(
                 n.flavor,
-                pycallgraph_rs::node::Flavor::Function
-                    | pycallgraph_rs::node::Flavor::Method
-                    | pycallgraph_rs::node::Flavor::StaticMethod
-                    | pycallgraph_rs::node::Flavor::ClassMethod
+                pycg_rs::node::Flavor::Function
+                    | pycg_rs::node::Flavor::Method
+                    | pycg_rs::node::Flavor::StaticMethod
+                    | pycg_rs::node::Flavor::ClassMethod
             )
         })
         .count();

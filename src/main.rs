@@ -5,9 +5,9 @@ use anyhow::{bail, Result};
 use clap::Parser;
 use walkdir::WalkDir;
 
-use pycallgraph_rs::analyzer::CallGraph;
-use pycallgraph_rs::visgraph::{VisualGraph, VisualOptions};
-use pycallgraph_rs::writer;
+use pycg_rs::analyzer::CallGraph;
+use pycg_rs::visgraph::{VisualGraph, VisualOptions};
+use pycg_rs::writer;
 
 #[derive(Parser)]
 #[command(name = "pycg", about = "Generate call graphs for Python programs")]
