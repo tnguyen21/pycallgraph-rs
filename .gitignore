@@ -18,3 +18,13 @@
 /.hive/
 /.hive-home/
 /.worktrees/
+
+# Mutation testing output
+/mutants.out/
+/mutants.out.old/
+
+# Generated SVGs
+*.svg
+
+# Benchmarks directory
+/benchmarks/
