@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::node::{Flavor, Node, NodeId};
 
-impl super::CallGraph {
+impl super::AnalysisSession {
     // =====================================================================
     // Postprocessing
     // =====================================================================
@@ -107,12 +107,14 @@ impl super::CallGraph {
         }
 
         // Mark all unknown nodes as not defined
-        for ids in self.nodes_by_name.values() {
-            for &id in ids {
-                if self.nodes_arena[id].namespace.is_none() {
-                    self.defined.remove(&id);
-                }
-            }
+        let unknown_ids: Vec<NodeId> = self
+            .nodes_by_name
+            .values()
+            .flat_map(|ids| ids.iter().copied())
+            .filter(|&id| self.nodes_arena[id].namespace.is_none())
+            .collect();
+        for id in unknown_ids {
+            self.defined.remove(&id);
         }
     }
 
@@ -153,8 +155,10 @@ impl super::CallGraph {
             let item_name = self.nodes_arena[from_id].name.clone();
 
             // Strategy 1: scope lookup in the source module.
-            let scope_vals: Vec<NodeId> =
-                self.lookup_values_in_scope(&mod_name, &item_name).iter().collect();
+            let scope_vals: Vec<NodeId> = self
+                .lookup_values_in_scope(&mod_name, &item_name)
+                .iter()
+                .collect();
             if !scope_vals.is_empty() {
                 // Prefer the first concrete (non-ImportedItem) candidate so
                 // that we chain through rather than stop at another placeholder.
@@ -166,8 +170,7 @@ impl super::CallGraph {
                 if let Some(target) = best {
                     import_mapping.insert(from_id, target);
                     // If the target is itself still an ImportedItem, chase it.
-                    if self.nodes_arena[target].flavor == Flavor::ImportedItem
-                        && target != from_id
+                    if self.nodes_arena[target].flavor == Flavor::ImportedItem && target != from_id
                     {
                         to_resolve.push(target);
                     }
@@ -218,8 +221,7 @@ impl super::CallGraph {
             let remap = |id: NodeId| -> NodeId { *import_mapping.get(&id).unwrap_or(&id) };
 
             // Remap uses_edges
-            let old_uses: Vec<(NodeId, HashSet<NodeId>)> =
-                self.uses_edges.drain().collect();
+            let old_uses: Vec<(NodeId, HashSet<NodeId>)> = self.uses_edges.drain().collect();
             for (from, targets) in old_uses {
                 if targets.is_empty() {
                     continue;
@@ -232,8 +234,7 @@ impl super::CallGraph {
             }
 
             // Remap defines_edges
-            let old_defines: Vec<(NodeId, HashSet<NodeId>)> =
-                self.defines_edges.drain().collect();
+            let old_defines: Vec<(NodeId, HashSet<NodeId>)> = self.defines_edges.drain().collect();
             for (from, targets) in old_defines {
                 if targets.is_empty() {
                     continue;
@@ -310,10 +311,11 @@ impl super::CallGraph {
                         let parent_to = self.get_parent_node(to);
                         let parent_other = self.get_parent_node(other);
                         if let Some(parent_to_uses) = self.uses_edges.get(&parent_to)
-                            && parent_to_uses.contains(&parent_other) {
-                                inherited = true;
-                                break;
-                            }
+                            && parent_to_uses.contains(&parent_other)
+                        {
+                            inherited = true;
+                            break;
+                        }
                     }
                 }
                 if inherited {
@@ -349,7 +351,9 @@ impl super::CallGraph {
             }
         }
     }
+}
 
+impl super::CallGraph {
     // ------------------------------------------------------------------
     // Module-level dependency graph
     // ------------------------------------------------------------------
@@ -367,11 +371,7 @@ impl super::CallGraph {
     /// directly to `VisualGraph::from_call_graph`.
     pub fn derive_module_graph(
         &self,
-    ) -> (
-        Vec<Node>,
-        HashMap<NodeId, HashSet<NodeId>>,
-        HashSet<NodeId>,
-    ) {
+    ) -> (Vec<Node>, HashMap<NodeId, HashSet<NodeId>>, HashSet<NodeId>) {
         // Reverse mapping: filename -> module name (for analyzed files).
         let filename_to_module: HashMap<&str, &str> = self
             .module_to_filename
@@ -393,13 +393,11 @@ impl super::CallGraph {
             id
         };
 
-        // Seed with all analyzed modules.
         for (mod_name, filename) in &self.module_to_filename {
             let id = ensure_module(mod_name, &mut new_nodes);
             new_nodes[id].filename = Some(filename.clone());
         }
 
-        // Collapse uses_edges to module granularity.
         let mut module_edges: HashMap<NodeId, HashSet<NodeId>> = HashMap::new();
 
         for (&src, targets) in &self.uses_edges {
@@ -413,9 +411,6 @@ impl super::CallGraph {
             for &tgt in targets {
                 let tgt_node = &self.nodes_arena[tgt];
 
-                // Map target to its owning module: Module-flavored nodes
-                // use their name (handles external/stdlib); all others
-                // use their filename.
                 let tgt_mod: Option<String> = if tgt_node.flavor == Flavor::Module {
                     Some(tgt_node.get_name())
                 } else {

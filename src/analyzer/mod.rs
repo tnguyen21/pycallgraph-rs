@@ -18,6 +18,7 @@ pub use util::get_module_name;
 use util::{collect_target_names_from_expr, get_ast_node_name, literal_key_from_expr};
 
 use std::collections::{HashMap, HashSet};
+use std::ops::{Deref, DerefMut};
 
 use anyhow::{Context, Result};
 use log::{debug, info};
@@ -208,7 +209,7 @@ fn extract_all_exports(expr: &Expr) -> Option<HashSet<String>> {
 // Public call-graph struct
 // ---------------------------------------------------------------------------
 
-/// The primary output of the analyzer: a call graph over Python symbols.
+/// The finished output of the analyzer: a call graph over Python symbols.
 #[derive(Debug)]
 pub struct CallGraph {
     // Node arena --------------------------------------------------------
@@ -224,6 +225,18 @@ pub struct CallGraph {
     /// Which nodes have been marked *defined* (have a defines edge from
     /// them, or were created as wildcard nodes).
     pub defined: HashSet<NodeId>,
+
+    // File mapping ------------------------------------------------------
+    pub(super) module_to_filename: HashMap<String, String>,
+}
+
+/// Internal mutable analysis session.
+///
+/// This owns the work-in-progress state needed to build a [`CallGraph`], but
+/// that transient state does not leak into the public result type.
+#[derive(Debug)]
+pub(super) struct AnalysisSession {
+    pub(super) graph: CallGraph,
 
     // Scope tracking (persistent across files/passes) -------------------
     pub(super) scopes: HashMap<String, ScopeInfo>,
@@ -242,8 +255,6 @@ pub struct CallGraph {
     /// Populated during `visit_stmt(Return)` and consumed in `visit_call`.
     pub(super) function_returns: HashMap<NodeId, HashSet<NodeId>>,
 
-    // File mapping ------------------------------------------------------
-    pub(super) module_to_filename: HashMap<String, String>,
     pub(super) filenames: Vec<String>,
     pub(super) root: Option<String>,
 
@@ -263,6 +274,20 @@ pub(super) enum BaseClassRef {
     Attribute(Vec<String>),
 }
 
+impl Deref for AnalysisSession {
+    type Target = CallGraph;
+
+    fn deref(&self) -> &Self::Target {
+        &self.graph
+    }
+}
+
+impl DerefMut for AnalysisSession {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.graph
+    }
+}
+
 // =========================================================================
 // Construction and high-level processing
 // =========================================================================
@@ -270,24 +295,34 @@ pub(super) enum BaseClassRef {
 impl CallGraph {
     /// Analyze a set of Python files and return the resulting call graph.
     pub fn new(filenames: &[String], root: Option<&str>) -> Result<Self> {
+        let mut session = AnalysisSession::new(filenames, root);
+        session.process()?;
+        Ok(session.into_call_graph())
+    }
+}
+
+impl AnalysisSession {
+    fn new(filenames: &[String], root: Option<&str>) -> Self {
         let mut module_to_filename = HashMap::new();
         for filename in filenames {
             let mod_name = get_module_name(filename, root);
             module_to_filename.insert(mod_name, filename.clone());
         }
 
-        let mut cg = Self {
-            nodes_arena: Vec::new(),
-            nodes_by_name: HashMap::new(),
-            defines_edges: HashMap::new(),
-            uses_edges: HashMap::new(),
-            defined: HashSet::new(),
+        Self {
+            graph: CallGraph {
+                nodes_arena: Vec::new(),
+                nodes_by_name: HashMap::new(),
+                defines_edges: HashMap::new(),
+                uses_edges: HashMap::new(),
+                defined: HashSet::new(),
+                module_to_filename,
+            },
             scopes: HashMap::new(),
             function_returns: HashMap::new(),
             class_base_ast_info: HashMap::new(),
             class_base_nodes: HashMap::new(),
             mro: HashMap::new(),
-            module_to_filename,
             filenames: filenames.to_vec(),
             root: root.map(|s| s.to_string()),
             module_name: String::new(),
@@ -296,10 +331,11 @@ impl CallGraph {
             scope_stack: Vec::new(),
             class_stack: Vec::new(),
             context_stack: Vec::new(),
-        };
+        }
+    }
 
-        cg.process()?;
-        Ok(cg)
+    fn into_call_graph(self) -> CallGraph {
+        self.graph
     }
 
     /// Two-pass analysis followed by a fixpoint loop for return-value propagation.
@@ -325,11 +361,18 @@ impl CallGraph {
         for pass_num in 0..MAX_PROPAGATION_PASSES {
             let prev_returns = self.function_returns.clone();
             for filename in self.filenames.clone() {
-                debug!("========== propagation pass {}, file '{}' ==========", pass_num + 1, filename);
+                debug!(
+                    "========== propagation pass {}, file '{}' ==========",
+                    pass_num + 1,
+                    filename
+                );
                 self.process_one(&filename)?;
             }
             if self.function_returns == prev_returns {
-                debug!("Return propagation converged after {} extra passes", pass_num + 1);
+                debug!(
+                    "Return propagation converged after {} extra passes",
+                    pass_num + 1
+                );
                 break;
             }
         }
@@ -349,7 +392,8 @@ impl CallGraph {
         self.analyze_scopes(&content);
 
         // Parse and visit.
-        let parsed = ruff_python_parser::parse_unchecked(&content, ParseOptions::from(Mode::Module));
+        let parsed =
+            ruff_python_parser::parse_unchecked(&content, ParseOptions::from(Mode::Module));
         let module = match parsed.syntax() {
             Mod::Module(m) => m,
             _ => return Ok(()),
@@ -393,7 +437,11 @@ impl CallGraph {
                     existing.defs.entry(name).or_default().union_with(&vs);
                 }
                 for (name, facts) in sc.containers {
-                    existing.containers.entry(name).or_default().union_with(&facts);
+                    existing
+                        .containers
+                        .entry(name)
+                        .or_default()
+                        .union_with(&facts);
                 }
                 // Propagate __all__ if newly discovered.
                 if existing.all_exports.is_none() && sc.all_exports.is_some() {
@@ -666,12 +714,12 @@ impl CallGraph {
 
         let mut node = Node::new(namespace, name, flavor);
         node.filename = filename;
+        let id = self.nodes_arena.len();
         // Wildcard nodes (namespace=None) start as defined
         if namespace.is_none() {
-            self.defined.insert(self.nodes_arena.len());
+            self.defined.insert(id);
         }
 
-        let id = self.nodes_arena.len();
         self.nodes_arena.push(node);
         self.nodes_by_name
             .entry(name.to_string())
@@ -726,10 +774,9 @@ impl CallGraph {
 
     pub(super) fn add_defines_edge(&mut self, from_id: NodeId, to_id: Option<NodeId>) -> bool {
         self.defined.insert(from_id);
-        let entry = self.defines_edges.entry(from_id).or_default();
         if let Some(to) = to_id {
             self.defined.insert(to);
-            entry.insert(to)
+            self.defines_edges.entry(from_id).or_default().insert(to)
         } else {
             false
         }
@@ -908,9 +955,10 @@ impl CallGraph {
     /// Check if a name is a local in the current (innermost) scope.
     fn is_local(&self, name: &str) -> bool {
         if let Some(scope_key) = self.scope_stack.last()
-            && let Some(scope) = self.scopes.get(scope_key) {
-                return scope.locals.contains(name);
-            }
+            && let Some(scope) = self.scopes.get(scope_key)
+        {
+            return scope.locals.contains(name);
+        }
         false
     }
 
@@ -1050,7 +1098,7 @@ impl CallGraph {
         }
     }
 
-/// Look up the first value of a name in a specific (named) scope.
+    /// Look up the first value of a name in a specific (named) scope.
     ///
     /// Returns `None` if the scope doesn't exist or the name is unbound.
     /// Use `lookup_values_in_scope` to get all possible values.
@@ -1099,11 +1147,7 @@ impl CallGraph {
         false
     }
 
-    fn set_attribute_shallow_value(
-        &mut self,
-        expr: &ExprAttribute,
-        value: &ShallowValue,
-    ) -> bool {
+    fn set_attribute_shallow_value(&mut self, expr: &ExprAttribute, value: &ShallowValue) -> bool {
         let (obj_node, attr_name) = self.resolve_attribute(expr);
 
         if let Some(obj_id) = obj_node
@@ -1156,8 +1200,7 @@ impl CallGraph {
                         if let Some(mro) = self.mro.get(&obj_id).cloned() {
                             for &base_id in mro.iter().skip(1) {
                                 let base_ns = self.nodes_arena[base_id].get_name();
-                                let base_values =
-                                    self.lookup_values_in_scope(&base_ns, &attr_name);
+                                let base_values = self.lookup_values_in_scope(&base_ns, &attr_name);
                                 let base_containers =
                                     self.lookup_containers_in_scope(&base_ns, &attr_name);
                                 if !base_values.is_empty() || !base_containers.is_empty() {
@@ -1294,7 +1337,8 @@ impl CallGraph {
             Stmt::Return(node) => {
                 if let Some(ref value) = node.value {
                     let ret_val = self.visit_expr(value, line_index);
-                    let mut ret_ids: Vec<NodeId> = self.resolve_shallow_value(value).values.iter().collect();
+                    let mut ret_ids: Vec<NodeId> =
+                        self.resolve_shallow_value(value).values.iter().collect();
                     if let Some(ret_id) = ret_val
                         && !ret_ids.contains(&ret_id)
                     {
@@ -1308,7 +1352,10 @@ impl CallGraph {
                         let is_unknown = self.nodes_arena[ret_id].namespace.is_none();
                         if !is_sentinel && !is_unknown {
                             let fn_node = self.get_node_of_current_namespace();
-                            self.function_returns.entry(fn_node).or_default().insert(ret_id);
+                            self.function_returns
+                                .entry(fn_node)
+                                .or_default()
+                                .insert(ret_id);
                         }
                     }
                 }
@@ -1333,8 +1380,12 @@ impl CallGraph {
                 }
             }
             Stmt::Match(node) => self.visit_match(node, line_index),
-            Stmt::Global(_) | Stmt::Nonlocal(_) | Stmt::Pass(_)
-            | Stmt::Break(_) | Stmt::Continue(_) | Stmt::IpyEscapeCommand(_) => {}
+            Stmt::Global(_)
+            | Stmt::Nonlocal(_)
+            | Stmt::Pass(_)
+            | Stmt::Break(_)
+            | Stmt::Continue(_)
+            | Stmt::IpyEscapeCommand(_) => {}
             Stmt::TypeAlias(node) => self.visit_type_alias(node, line_index),
         }
     }
@@ -1475,7 +1526,11 @@ impl CallGraph {
             && let Some(class_id) = self.get_current_class()
         {
             if let Some(scope) = self.scopes.get_mut(&inner_ns) {
-                scope.defs.entry(sname.clone()).or_default().insert(class_id);
+                scope
+                    .defs
+                    .entry(sname.clone())
+                    .or_default()
+                    .insert(class_id);
             }
             info!(
                 "Method def: setting self name \"{}\" to {}",
@@ -1503,13 +1558,15 @@ impl CallGraph {
             }
         }
         if let Some(ref va) = node.parameters.vararg
-            && let Some(ref annotation) = va.annotation {
-                self.visit_expr(annotation, line_index);
-            }
+            && let Some(ref annotation) = va.annotation
+        {
+            self.visit_expr(annotation, line_index);
+        }
         if let Some(ref kw) = node.parameters.kwarg
-            && let Some(ref annotation) = kw.annotation {
-                self.visit_expr(annotation, line_index);
-            }
+            && let Some(ref annotation) = kw.annotation
+        {
+            self.visit_expr(annotation, line_index);
+        }
 
         // Visit function body
         for stmt in &node.body {
@@ -1615,12 +1672,15 @@ impl CallGraph {
         for arg in &params.args {
             if let Some(ref default) = arg.default {
                 let val = self.visit_expr(default, line_index);
-                self.bind_target_to_value(&Expr::Name(ExprName {
-                    node_index: AtomicNodeIndex::default(),
-                    range: arg.parameter.name.range(),
-                    id: arg.parameter.name.id.clone(),
-                    ctx: ExprContext::Store,
-                }), val);
+                self.bind_target_to_value(
+                    &Expr::Name(ExprName {
+                        node_index: AtomicNodeIndex::default(),
+                        range: arg.parameter.name.range(),
+                        id: arg.parameter.name.id.clone(),
+                        ctx: ExprContext::Store,
+                    }),
+                    val,
+                );
             }
         }
 
@@ -1628,12 +1688,15 @@ impl CallGraph {
         for arg in &params.kwonlyargs {
             if let Some(ref default) = arg.default {
                 let val = self.visit_expr(default, line_index);
-                self.bind_target_to_value(&Expr::Name(ExprName {
-                    node_index: AtomicNodeIndex::default(),
-                    range: arg.parameter.name.range(),
-                    id: arg.parameter.name.id.clone(),
-                    ctx: ExprContext::Store,
-                }), val);
+                self.bind_target_to_value(
+                    &Expr::Name(ExprName {
+                        node_index: AtomicNodeIndex::default(),
+                        range: arg.parameter.name.range(),
+                        id: arg.parameter.name.id.clone(),
+                        ctx: ExprContext::Store,
+                    }),
+                    val,
+                );
             }
         }
     }
@@ -1777,30 +1840,29 @@ impl CallGraph {
     fn handle_star_import(&mut self, from_node: NodeId, tgt_module: &str) {
         // Collect the source module's bindings while holding an immutable
         // borrow on self.scopes.
-        let bindings: Vec<(String, ValueSet)> =
-            if let Some(scope) = self.scopes.get(tgt_module) {
-                let all_exports = scope.all_exports.clone();
-                scope
-                    .defs
-                    .iter()
-                    .filter(|(name, vs)| {
-                        // Always skip empty placeholders.
-                        if vs.is_empty() {
-                            return false;
-                        }
-                        // If __all__ is statically known, use it as the
-                        // definitive export list (INV-1).
-                        if let Some(ref exports) = all_exports {
-                            return exports.contains(name.as_str());
-                        }
-                        // No __all__: skip private names (INV-2).
-                        !name.starts_with('_')
-                    })
-                    .map(|(k, v)| (k.clone(), v.clone()))
-                    .collect()
-            } else {
-                Vec::new()
-            };
+        let bindings: Vec<(String, ValueSet)> = if let Some(scope) = self.scopes.get(tgt_module) {
+            let all_exports = scope.all_exports.clone();
+            scope
+                .defs
+                .iter()
+                .filter(|(name, vs)| {
+                    // Always skip empty placeholders.
+                    if vs.is_empty() {
+                        return false;
+                    }
+                    // If __all__ is statically known, use it as the
+                    // definitive export list (INV-1).
+                    if let Some(ref exports) = all_exports {
+                        return exports.contains(name.as_str());
+                    }
+                    // No __all__: skip private names (INV-2).
+                    !name.starts_with('_')
+                })
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect()
+        } else {
+            Vec::new()
+        };
 
         for (name, values) in bindings {
             for id in values.iter() {
@@ -2368,11 +2430,7 @@ impl CallGraph {
         }
     }
 
-    fn visit_attribute(
-        &mut self,
-        node: &ExprAttribute,
-        line_index: &LineIndex,
-    ) -> Option<NodeId> {
+    fn visit_attribute(&mut self, node: &ExprAttribute, line_index: &LineIndex) -> Option<NodeId> {
         if node.ctx == ExprContext::Load {
             let attr_name = node.attr.id.to_string();
             let from_node = self.get_node_of_current_namespace();
@@ -2422,8 +2480,7 @@ impl CallGraph {
                     } else {
                         // Obj is known but attr is not: create a placeholder
                         // attribute node so callers can chain off it.
-                        let attr_node =
-                            self.get_node(Some(&ns), &attr_name, Flavor::Attribute);
+                        let attr_node = self.get_node(Some(&ns), &attr_name, Flavor::Attribute);
                         self.add_uses_edge(from_node, attr_node);
                         self.remove_wild(from_node, obj_id, &attr_name);
                         attr_node
@@ -2482,20 +2539,20 @@ impl CallGraph {
         // If calling a known class, add __init__ edge and return the class node
         // as the "instance type" so downstream attribute access resolves correctly.
         if let Some(func_id) = func_node
-            && self.class_base_ast_info.contains_key(&func_id) {
-                let from_node = self.get_node_of_current_namespace();
-                let func_name = self.nodes_arena[func_id].get_name();
-                let init_node =
-                    self.get_node(Some(&func_name), "__init__", Flavor::Method);
-                if self.add_uses_edge(from_node, init_node) {
-                    info!(
-                        "New edge added for Use from {} to {} (class instantiation)",
-                        self.nodes_arena[from_node].get_name(),
-                        self.nodes_arena[init_node].get_name()
-                    );
-                }
-                return func_node; // class node == instance type
+            && self.class_base_ast_info.contains_key(&func_id)
+        {
+            let from_node = self.get_node_of_current_namespace();
+            let func_name = self.nodes_arena[func_id].get_name();
+            let init_node = self.get_node(Some(&func_name), "__init__", Flavor::Method);
+            if self.add_uses_edge(from_node, init_node) {
+                info!(
+                    "New edge added for Use from {} to {} (class instantiation)",
+                    self.nodes_arena[from_node].get_name(),
+                    self.nodes_arena[init_node].get_name()
+                );
             }
+            return func_node; // class node == instance type
+        }
 
         // Collect all possible function node candidates for return-type
         // propagation.  `visit_expr` may return a placeholder when the callee
@@ -2541,11 +2598,7 @@ impl CallGraph {
         func_node
     }
 
-    fn visit_lambda(
-        &mut self,
-        node: &ExprLambda,
-        line_index: &LineIndex,
-    ) -> Option<NodeId> {
+    fn visit_lambda(&mut self, node: &ExprLambda, line_index: &LineIndex) -> Option<NodeId> {
         let label = "lambda";
         let parent_ns = {
             let parent_node = self.get_node_of_current_namespace();
@@ -2573,7 +2626,8 @@ impl CallGraph {
                     names.insert(kw.name.id.to_string());
                 }
             }
-            self.scopes.insert(inner_ns.clone(), ScopeInfo::from_names(label, &names));
+            self.scopes
+                .insert(inner_ns.clone(), ScopeInfo::from_names(label, &names));
         }
 
         self.name_stack.push(label.to_string());
@@ -2599,36 +2653,44 @@ impl CallGraph {
         Some(to_node)
     }
 
-    fn visit_list_comp(
-        &mut self,
-        node: &ExprListComp,
-        line_index: &LineIndex,
-    ) -> Option<NodeId> {
-        self.analyze_comprehension(&node.generators, Some(&node.elt), None, "listcomp", line_index)
+    fn visit_list_comp(&mut self, node: &ExprListComp, line_index: &LineIndex) -> Option<NodeId> {
+        self.analyze_comprehension(
+            &node.generators,
+            Some(&node.elt),
+            None,
+            "listcomp",
+            line_index,
+        )
     }
 
-    fn visit_set_comp(
-        &mut self,
-        node: &ExprSetComp,
-        line_index: &LineIndex,
-    ) -> Option<NodeId> {
-        self.analyze_comprehension(&node.generators, Some(&node.elt), None, "setcomp", line_index)
+    fn visit_set_comp(&mut self, node: &ExprSetComp, line_index: &LineIndex) -> Option<NodeId> {
+        self.analyze_comprehension(
+            &node.generators,
+            Some(&node.elt),
+            None,
+            "setcomp",
+            line_index,
+        )
     }
 
-    fn visit_dict_comp(
-        &mut self,
-        node: &ExprDictComp,
-        line_index: &LineIndex,
-    ) -> Option<NodeId> {
-        self.analyze_comprehension(&node.generators, Some(&node.key), Some(&node.value), "dictcomp", line_index)
+    fn visit_dict_comp(&mut self, node: &ExprDictComp, line_index: &LineIndex) -> Option<NodeId> {
+        self.analyze_comprehension(
+            &node.generators,
+            Some(&node.key),
+            Some(&node.value),
+            "dictcomp",
+            line_index,
+        )
     }
 
-    fn visit_generator(
-        &mut self,
-        node: &ExprGenerator,
-        line_index: &LineIndex,
-    ) -> Option<NodeId> {
-        self.analyze_comprehension(&node.generators, Some(&node.elt), None, "genexpr", line_index)
+    fn visit_generator(&mut self, node: &ExprGenerator, line_index: &LineIndex) -> Option<NodeId> {
+        self.analyze_comprehension(
+            &node.generators,
+            Some(&node.elt),
+            None,
+            "genexpr",
+            line_index,
+        )
     }
 
     /// Emit uses edges for Python protocol dunder methods on a known class/instance.
@@ -2714,7 +2776,10 @@ impl CallGraph {
             for comp in generators {
                 collect_target_names_from_expr(&comp.target, &mut target_names);
             }
-            self.scopes.insert(inner_ns.clone(), ScopeInfo::from_names(label, &target_names));
+            self.scopes.insert(
+                inner_ns.clone(),
+                ScopeInfo::from_names(label, &target_names),
+            );
         }
 
         // Enter inner scope
@@ -2911,11 +2976,7 @@ impl CallGraph {
     fn resolve_super(&self) -> Option<NodeId> {
         let class_id = self.get_current_class()?;
         let mro = self.mro.get(&class_id)?;
-        if mro.len() > 1 {
-            Some(mro[1])
-        } else {
-            None
-        }
+        if mro.len() > 1 { Some(mro[1]) } else { None }
     }
 
     // =====================================================================
@@ -2954,9 +3015,10 @@ impl CallGraph {
                 };
 
                 if let Some(bid) = base_id
-                    && self.nodes_arena[bid].namespace.is_some() {
-                        bases.push(bid);
-                    }
+                    && self.nodes_arena[bid].namespace.is_some()
+                {
+                    bases.push(bid);
+                }
             }
 
             class_base_nodes.insert(*cls_id, bases);
@@ -3007,5 +3069,4 @@ impl CallGraph {
 
         Some(current)
     }
-
 }

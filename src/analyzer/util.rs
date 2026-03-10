@@ -51,7 +51,10 @@ pub(super) fn literal_key_from_expr(expr: &Expr) -> Option<LiteralKey> {
         Expr::UnaryOp(u) if matches!(u.op, UnaryOp::USub) => {
             if let Expr::NumberLiteral(n) = u.operand.as_ref() {
                 if let Number::Int(i) = &n.value {
-                    return i.as_i64().and_then(|value| value.checked_neg()).map(LiteralKey::Int);
+                    return i
+                        .as_i64()
+                        .and_then(|value| value.checked_neg())
+                        .map(LiteralKey::Int);
                 }
             }
             None
@@ -89,8 +92,7 @@ pub fn get_module_name(filename: &str, root: Option<&str>) -> String {
     }
 
     // Walk up directories checking for __init__.py
-    let mut directories: Vec<(std::path::PathBuf, bool)> =
-        vec![(module_path.to_path_buf(), true)];
+    let mut directories: Vec<(std::path::PathBuf, bool)> = vec![(module_path.to_path_buf(), true)];
 
     let mut current = module_path.parent();
     while let Some(dir) = current {

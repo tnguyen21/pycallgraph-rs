@@ -1,7 +1,7 @@
 use std::io::Write;
 use std::path::PathBuf;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use clap::Parser;
 use walkdir::WalkDir;
 
@@ -125,9 +125,19 @@ fn main() -> Result<()> {
         // JSON bypasses the visual graph — serialize raw call graph data.
         if cli.modules {
             let (mod_nodes, mod_uses, mod_defined) = cg.derive_module_graph();
-            writer::write_json(&mod_nodes, &mod_defined, &std::collections::HashMap::new(), &mod_uses)
+            writer::write_json(
+                &mod_nodes,
+                &mod_defined,
+                &std::collections::HashMap::new(),
+                &mod_uses,
+            )
         } else {
-            writer::write_json(&cg.nodes_arena, &cg.defined, &cg.defines_edges, &cg.uses_edges)
+            writer::write_json(
+                &cg.nodes_arena,
+                &cg.defined,
+                &cg.defines_edges,
+                &cg.uses_edges,
+            )
         }
     } else {
         let vg = if cli.modules {

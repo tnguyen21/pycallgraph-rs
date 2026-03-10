@@ -39,10 +39,7 @@ fn make_call_graph(dir: &std::path::Path) -> CallGraph {
 
 /// Find all nodes with the given short name, or whose fully qualified name ends with the given name.
 fn find_nodes_by_name(cg: &CallGraph, name: &str) -> Vec<usize> {
-    let mut result: Vec<usize> = cg.nodes_by_name
-        .get(name)
-        .cloned()
-        .unwrap_or_default();
+    let mut result: Vec<usize> = cg.nodes_by_name.get(name).cloned().unwrap_or_default();
     for (idx, node) in cg.nodes_arena.iter().enumerate() {
         if node.get_name() == name || node.get_name().ends_with(&format!(".{name}")) {
             if !result.contains(&idx) {
@@ -114,39 +111,68 @@ fn has_uses_edge(cg: &CallGraph, from_name: &str, to_name: &str) -> bool {
 #[test]
 fn test_modules_found() {
     let cg = make_call_graph(&test_code_dir());
-    let module_names: Vec<_> = cg.nodes_arena.iter()
+    let module_names: Vec<_> = cg
+        .nodes_arena
+        .iter()
         .filter(|n| n.flavor == pycg_rs::node::Flavor::Module)
         .map(|n| n.get_name())
         .collect();
-    assert!(module_names.iter().any(|n| n.contains("submodule1")), "submodule1 not found");
-    assert!(module_names.iter().any(|n| n.contains("submodule2")), "submodule2 not found");
+    assert!(
+        module_names.iter().any(|n| n.contains("submodule1")),
+        "submodule1 not found"
+    );
+    assert!(
+        module_names.iter().any(|n| n.contains("submodule2")),
+        "submodule2 not found"
+    );
 }
 
 #[test]
 fn test_class_found() {
     let cg = make_call_graph(&test_code_dir());
-    let classes: Vec<_> = cg.nodes_arena.iter()
+    let classes: Vec<_> = cg
+        .nodes_arena
+        .iter()
         .filter(|n| n.flavor == pycg_rs::node::Flavor::Class)
         .map(|n| n.name.clone())
         .collect();
-    assert!(classes.contains(&"A".to_string()), "Class A not found, got: {:?}", classes);
+    assert!(
+        classes.contains(&"A".to_string()),
+        "Class A not found, got: {:?}",
+        classes
+    );
 }
 
 #[test]
 fn test_function_found() {
     let cg = make_call_graph(&test_code_dir());
-    let functions: Vec<_> = cg.nodes_arena.iter()
-        .filter(|n| matches!(n.flavor, pycg_rs::node::Flavor::Function | pycg_rs::node::Flavor::Method))
+    let functions: Vec<_> = cg
+        .nodes_arena
+        .iter()
+        .filter(|n| {
+            matches!(
+                n.flavor,
+                pycg_rs::node::Flavor::Function | pycg_rs::node::Flavor::Method
+            )
+        })
         .map(|n| n.name.clone())
         .collect();
-    assert!(functions.contains(&"test_func1".to_string()), "test_func1 not found, got: {:?}", functions);
+    assert!(
+        functions.contains(&"test_func1".to_string()),
+        "test_func1 not found, got: {:?}",
+        functions
+    );
 }
 
 #[test]
 fn test_submodule_defines() {
     let cg = make_call_graph(&test_code_dir());
     let defs = get_defines(&cg, "submodule2");
-    assert!(defs.contains("test_2"), "submodule2 should define test_2, got: {:?}", defs);
+    assert!(
+        defs.contains("test_2"),
+        "submodule2 should define test_2, got: {:?}",
+        defs
+    );
 }
 
 #[test]
@@ -155,7 +181,8 @@ fn test_uses_edge_exists() {
     let uses = get_uses(&cg, "test_2");
     assert!(
         uses.contains("test_func1") || uses.contains("test_func2"),
-        "test_2 should use test_func1 or test_func2, got: {:?}", uses
+        "test_2 should use test_func1 or test_func2, got: {:?}",
+        uses
     );
 }
 
@@ -174,14 +201,27 @@ fn test_dot_output_valid() {
         annotated: false,
     };
     let vg = VisualGraph::from_call_graph(
-        &cg.nodes_arena, &cg.defined, &cg.defines_edges, &cg.uses_edges, &opts,
+        &cg.nodes_arena,
+        &cg.defined,
+        &cg.defines_edges,
+        &cg.uses_edges,
+        &opts,
     );
     let dot = writer::write_dot(&vg, &["rankdir=TB".to_string()]);
-    assert!(dot.starts_with("digraph G {"), "DOT output should start with 'digraph G {{'");
+    assert!(
+        dot.starts_with("digraph G {"),
+        "DOT output should start with 'digraph G {{'"
+    );
     assert!(dot.trim().ends_with('}'), "DOT output should end with '}}'");
     assert!(dot.contains("->"), "DOT output should contain edges");
-    assert!(dot.contains("style=\"dashed\""), "DOT output should have defines edges (dashed)");
-    assert!(dot.contains("style=\"solid\""), "DOT output should have uses edges (solid)");
+    assert!(
+        dot.contains("style=\"dashed\""),
+        "DOT output should have defines edges (dashed)"
+    );
+    assert!(
+        dot.contains("style=\"solid\""),
+        "DOT output should have uses edges (solid)"
+    );
 }
 
 #[test]
@@ -195,10 +235,17 @@ fn test_dot_output_grouped() {
         annotated: false,
     };
     let vg = VisualGraph::from_call_graph(
-        &cg.nodes_arena, &cg.defined, &cg.defines_edges, &cg.uses_edges, &opts,
+        &cg.nodes_arena,
+        &cg.defined,
+        &cg.defines_edges,
+        &cg.uses_edges,
+        &opts,
     );
     let dot = writer::write_dot(&vg, &["rankdir=TB".to_string()]);
-    assert!(dot.contains("subgraph cluster_"), "Grouped DOT should have subgraphs");
+    assert!(
+        dot.contains("subgraph cluster_"),
+        "Grouped DOT should have subgraphs"
+    );
 }
 
 // ===================================================================
@@ -260,7 +307,11 @@ fn test_tgf_output_valid() {
         annotated: false,
     };
     let vg = VisualGraph::from_call_graph(
-        &cg.nodes_arena, &cg.defined, &cg.defines_edges, &cg.uses_edges, &opts,
+        &cg.nodes_arena,
+        &cg.defined,
+        &cg.defines_edges,
+        &cg.uses_edges,
+        &opts,
     );
     let tgf = writer::write_tgf(&vg);
     assert!(tgf.contains('#'), "TGF should have # separator");
@@ -285,10 +336,17 @@ fn test_text_output_valid() {
         annotated: false,
     };
     let vg = VisualGraph::from_call_graph(
-        &cg.nodes_arena, &cg.defined, &cg.defines_edges, &cg.uses_edges, &opts,
+        &cg.nodes_arena,
+        &cg.defined,
+        &cg.defines_edges,
+        &cg.uses_edges,
+        &opts,
     );
     let text = writer::write_text(&vg);
-    assert!(text.contains("[D]") || text.contains("[U]"), "Text should have tagged edges");
+    assert!(
+        text.contains("[D]") || text.contains("[U]"),
+        "Text should have tagged edges"
+    );
     for line in text.lines() {
         if line.starts_with("    ") {
             assert!(
@@ -312,14 +370,25 @@ fn test_regression_annotated_assignments() {
     let cg = CallGraph::new(&files, None)
         .expect("issue2: annotated assignment must not crash the analyzer");
     // The file defines annotated_fn and Container – verify we produced nodes.
-    assert!(!cg.nodes_arena.is_empty(), "issue2: graph should not be empty");
-    let fn_names: Vec<_> = cg.nodes_arena.iter()
-        .filter(|n| matches!(n.flavor,
-            pycg_rs::node::Flavor::Function | pycg_rs::node::Flavor::Method))
+    assert!(
+        !cg.nodes_arena.is_empty(),
+        "issue2: graph should not be empty"
+    );
+    let fn_names: Vec<_> = cg
+        .nodes_arena
+        .iter()
+        .filter(|n| {
+            matches!(
+                n.flavor,
+                pycg_rs::node::Flavor::Function | pycg_rs::node::Flavor::Method
+            )
+        })
         .map(|n| n.name.as_str())
         .collect();
-    assert!(fn_names.contains(&"annotated_fn"),
-        "issue2: annotated_fn not found, got: {fn_names:?}");
+    assert!(
+        fn_names.contains(&"annotated_fn"),
+        "issue2: annotated_fn not found, got: {fn_names:?}"
+    );
 }
 
 /// Issue #3: complex / nested comprehensions (list-inside-list, dict-in-list,
@@ -328,16 +397,31 @@ fn test_regression_annotated_assignments() {
 fn test_regression_comprehensions() {
     let fixture = test_code_dir().join("regression_issue3.py");
     let files = vec![fixture.to_string_lossy().to_string()];
-    let cg = CallGraph::new(&files, None)
-        .expect("issue3: comprehensions must not crash the analyzer");
-    let fn_names: Vec<_> = cg.nodes_arena.iter()
-        .filter(|n| matches!(n.flavor,
-            pycg_rs::node::Flavor::Function | pycg_rs::node::Flavor::Method))
+    let cg =
+        CallGraph::new(&files, None).expect("issue3: comprehensions must not crash the analyzer");
+    let fn_names: Vec<_> = cg
+        .nodes_arena
+        .iter()
+        .filter(|n| {
+            matches!(
+                n.flavor,
+                pycg_rs::node::Flavor::Function | pycg_rs::node::Flavor::Method
+            )
+        })
         .map(|n| n.name.as_str())
         .collect();
-    assert!(fn_names.contains(&"f"), "issue3: function f not found, got: {fn_names:?}");
-    assert!(fn_names.contains(&"g"), "issue3: function g not found, got: {fn_names:?}");
-    assert!(fn_names.contains(&"h"), "issue3: function h not found, got: {fn_names:?}");
+    assert!(
+        fn_names.contains(&"f"),
+        "issue3: function f not found, got: {fn_names:?}"
+    );
+    assert!(
+        fn_names.contains(&"g"),
+        "issue3: function g not found, got: {fn_names:?}"
+    );
+    assert!(
+        fn_names.contains(&"h"),
+        "issue3: function h not found, got: {fn_names:?}"
+    );
 }
 
 /// Issue #5: files that reference external / uninstalled packages (numpy,
@@ -348,12 +432,16 @@ fn test_regression_external_deps() {
     let files = vec![fixture.to_string_lossy().to_string()];
     let cg = CallGraph::new(&files, None)
         .expect("issue5: external-dep imports must not crash the analyzer");
-    let class_names: Vec<_> = cg.nodes_arena.iter()
+    let class_names: Vec<_> = cg
+        .nodes_arena
+        .iter()
         .filter(|n| n.flavor == pycg_rs::node::Flavor::Class)
         .map(|n| n.name.as_str())
         .collect();
-    assert!(class_names.contains(&"MyProcessor"),
-        "issue5: MyProcessor not found, got: {class_names:?}");
+    assert!(
+        class_names.contains(&"MyProcessor"),
+        "issue5: MyProcessor not found, got: {class_names:?}"
+    );
 }
 
 // ===================================================================
@@ -372,12 +460,24 @@ fn make_features_graph() -> CallGraph {
 #[test]
 fn test_features_classes_found() {
     let cg = make_features_graph();
-    let class_names: HashSet<_> = cg.nodes_arena.iter()
+    let class_names: HashSet<_> = cg
+        .nodes_arena
+        .iter()
         .filter(|n| n.flavor == pycg_rs::node::Flavor::Class)
         .map(|n| n.name.as_str())
         .collect();
-    for expected in ["Decorated", "Base", "Derived", "MixinA", "MixinB", "Combined"] {
-        assert!(class_names.contains(expected), "Class {expected} not found, got: {class_names:?}");
+    for expected in [
+        "Decorated",
+        "Base",
+        "Derived",
+        "MixinA",
+        "MixinB",
+        "Combined",
+    ] {
+        assert!(
+            class_names.contains(expected),
+            "Class {expected} not found, got: {class_names:?}"
+        );
     }
 }
 
@@ -389,33 +489,46 @@ fn test_features_decorators() {
     assert!(has_defines_edge(&cg, "Decorated", "my_prop"));
     assert!(has_defines_edge(&cg, "Decorated", "regular"));
 
-    let sm: Vec<_> = find_nodes_by_name(&cg, "static_method").into_iter()
+    let sm: Vec<_> = find_nodes_by_name(&cg, "static_method")
+        .into_iter()
         .filter(|&id| cg.nodes_arena[id].flavor == pycg_rs::node::Flavor::StaticMethod)
         .collect();
-    assert!(!sm.is_empty(), "static_method should have StaticMethod flavor");
+    assert!(
+        !sm.is_empty(),
+        "static_method should have StaticMethod flavor"
+    );
 
-    let cm: Vec<_> = find_nodes_by_name(&cg, "class_method").into_iter()
+    let cm: Vec<_> = find_nodes_by_name(&cg, "class_method")
+        .into_iter()
         .filter(|&id| cg.nodes_arena[id].flavor == pycg_rs::node::Flavor::ClassMethod)
         .collect();
-    assert!(!cm.is_empty(), "class_method should have ClassMethod flavor");
+    assert!(
+        !cm.is_empty(),
+        "class_method should have ClassMethod flavor"
+    );
 }
 
 #[test]
 fn test_features_inheritance() {
     let cg = make_features_graph();
-    assert!(has_uses_edge(&cg, "Derived", "Base"),
-            "Derived should use Base (inheritance)");
-    assert!(has_uses_edge(&cg, "bar", "foo"),
-            "bar should use foo");
+    assert!(
+        has_uses_edge(&cg, "Derived", "Base"),
+        "Derived should use Base (inheritance)"
+    );
+    assert!(has_uses_edge(&cg, "bar", "foo"), "bar should use foo");
 }
 
 #[test]
 fn test_features_multiple_inheritance() {
     let cg = make_features_graph();
-    assert!(has_uses_edge(&cg, "Combined", "MixinA"),
-            "Combined should use MixinA");
-    assert!(has_uses_edge(&cg, "Combined", "MixinB"),
-            "Combined should use MixinB");
+    assert!(
+        has_uses_edge(&cg, "Combined", "MixinA"),
+        "Combined should use MixinA"
+    );
+    assert!(
+        has_uses_edge(&cg, "Combined", "MixinB"),
+        "Combined should use MixinB"
+    );
 }
 
 // ===================================================================
@@ -571,81 +684,103 @@ fn make_fixture_dir_graph(subdir: &str) -> CallGraph {
 #[test]
 fn test_stmt_while_produces_edge() {
     let cg = make_fixture_graph("stmt_coverage.py");
-    assert!(has_uses_edge(&cg, "uses_while", "process"),
-        "call inside while body must produce uses edge");
+    assert!(
+        has_uses_edge(&cg, "uses_while", "process"),
+        "call inside while body must produce uses edge"
+    );
 }
 
 #[test]
 fn test_stmt_try_produces_edge() {
     let cg = make_fixture_graph("stmt_coverage.py");
-    assert!(has_uses_edge(&cg, "uses_try", "process"),
-        "call inside try body must produce uses edge");
+    assert!(
+        has_uses_edge(&cg, "uses_try", "process"),
+        "call inside try body must produce uses edge"
+    );
 }
 
 #[test]
 fn test_stmt_try_except_body_produces_edge() {
     let cg = make_fixture_graph("stmt_coverage.py");
-    assert!(has_uses_edge(&cg, "uses_try_except_body", "assist"),
-        "call inside except body must produce uses edge");
+    assert!(
+        has_uses_edge(&cg, "uses_try_except_body", "assist"),
+        "call inside except body must produce uses edge"
+    );
 }
 
 #[test]
 fn test_stmt_match_produces_edge() {
     let cg = make_fixture_graph("stmt_coverage.py");
-    assert!(has_uses_edge(&cg, "uses_match", "process"),
-        "call inside match arm must produce uses edge");
+    assert!(
+        has_uses_edge(&cg, "uses_match", "process"),
+        "call inside match arm must produce uses edge"
+    );
 }
 
 #[test]
 fn test_stmt_ann_assign_produces_edge() {
     let cg = make_fixture_graph("stmt_coverage.py");
-    assert!(has_uses_edge(&cg, "uses_ann_assign", "process"),
-        "annotated assignment + call must produce uses edge");
+    assert!(
+        has_uses_edge(&cg, "uses_ann_assign", "process"),
+        "annotated assignment + call must produce uses edge"
+    );
 }
 
 #[test]
 fn test_stmt_lambda_produces_edge() {
     let cg = make_fixture_graph("stmt_coverage.py");
     // After collapse_inner, lambda edges merge into parent function.
-    assert!(has_uses_edge(&cg, "uses_lambda", "process"),
-        "lambda body call must produce uses edge (after collapse_inner)");
+    assert!(
+        has_uses_edge(&cg, "uses_lambda", "process"),
+        "lambda body call must produce uses edge (after collapse_inner)"
+    );
 }
 
 #[test]
 fn test_stmt_default_arg_produces_edge() {
     let cg = make_fixture_graph("stmt_coverage.py");
-    assert!(has_uses_edge(&cg, "uses_defaults", "Worker"),
-        "default argument call must produce uses edge");
+    assert!(
+        has_uses_edge(&cg, "uses_defaults", "Worker"),
+        "default argument call must produce uses edge"
+    );
 }
 
 #[test]
 fn test_stmt_for_produces_edge() {
     let cg = make_fixture_graph("stmt_coverage.py");
     // For-loop body is visited; at minimum the constructor call is tracked.
-    assert!(has_uses_edge(&cg, "uses_for", "Worker"),
-        "call inside for body must produce uses edge to constructor");
+    assert!(
+        has_uses_edge(&cg, "uses_for", "Worker"),
+        "call inside for body must produce uses edge to constructor"
+    );
 }
 
 #[test]
 fn test_stmt_with_produces_edge() {
     let cg = make_fixture_graph("stmt_coverage.py");
-    assert!(has_uses_edge(&cg, "uses_with", "process"),
-        "call inside with body must produce uses edge");
+    assert!(
+        has_uses_edge(&cg, "uses_with", "process"),
+        "call inside with body must produce uses edge"
+    );
 }
 
 #[test]
 fn test_stmt_global_scope_defs() {
     let cg = make_fixture_graph("stmt_coverage.py");
     // global statement must allow name to be collected in scope defs
-    assert!(has_uses_edge(&cg, "uses_global", "Worker"),
-        "global var assignment must produce uses edge to class");
+    assert!(
+        has_uses_edge(&cg, "uses_global", "Worker"),
+        "global var assignment must produce uses edge to class"
+    );
 }
 
 #[test]
 fn test_stmt_nonlocal_scope_defs() {
     let cg = make_fixture_graph("stmt_coverage.py");
-    assert!(has_uses_edge(&cg, "inner", "Worker"),
-        "nonlocal var assignment must produce uses edge to class");
+    assert!(
+        has_uses_edge(&cg, "inner", "Worker"),
+        "nonlocal var assignment must produce uses edge to class"
+    );
 }
 
 // ===================================================================
@@ -655,37 +790,52 @@ fn test_stmt_nonlocal_scope_defs() {
 #[test]
 fn test_binding_tuple_unpack() {
     let cg = make_fixture_graph("binding_coverage.py");
-    assert!(has_uses_edge(&cg, "tuple_unpack", "x_method"),
-        "first tuple element should resolve to X");
-    assert!(has_uses_edge(&cg, "tuple_unpack", "y_method"),
-        "second tuple element should resolve to Y");
+    assert!(
+        has_uses_edge(&cg, "tuple_unpack", "x_method"),
+        "first tuple element should resolve to X"
+    );
+    assert!(
+        has_uses_edge(&cg, "tuple_unpack", "y_method"),
+        "second tuple element should resolve to Y"
+    );
 }
 
 #[test]
 fn test_binding_list_unpack() {
     let cg = make_fixture_graph("binding_coverage.py");
-    assert!(has_uses_edge(&cg, "list_unpack", "x_method"),
-        "first list element should resolve to X");
-    assert!(has_uses_edge(&cg, "list_unpack", "y_method"),
-        "second list element should resolve to Y");
+    assert!(
+        has_uses_edge(&cg, "list_unpack", "x_method"),
+        "first list element should resolve to X"
+    );
+    assert!(
+        has_uses_edge(&cg, "list_unpack", "y_method"),
+        "second list element should resolve to Y"
+    );
 }
 
 #[test]
 fn test_binding_nested_tuple() {
     let cg = make_fixture_graph("binding_coverage.py");
     // At minimum the outer tuple first element resolves.
-    assert!(has_uses_edge(&cg, "nested_tuple_unpack", "x_method"),
-        "first element of nested tuple should resolve");
+    assert!(
+        has_uses_edge(&cg, "nested_tuple_unpack", "x_method"),
+        "first element of nested tuple should resolve"
+    );
     // Inner nested tuple is harder to resolve; check constructors at least.
-    assert!(has_uses_edge(&cg, "nested_tuple_unpack", "Y") || has_uses_edge(&cg, "nested_tuple_unpack", "Z"),
-        "nested tuple constructors should be tracked");
+    assert!(
+        has_uses_edge(&cg, "nested_tuple_unpack", "Y")
+            || has_uses_edge(&cg, "nested_tuple_unpack", "Z"),
+        "nested tuple constructors should be tracked"
+    );
 }
 
 #[test]
 fn test_binding_starred() {
     let cg = make_fixture_graph("binding_coverage.py");
-    assert!(has_uses_edge(&cg, "starred_unpack", "x_method"),
-        "first element before star should resolve");
+    assert!(
+        has_uses_edge(&cg, "starred_unpack", "x_method"),
+        "first element before star should resolve"
+    );
 }
 
 #[test]
@@ -693,15 +843,19 @@ fn test_binding_attr_assignment() {
     let cg = make_fixture_graph("binding_coverage.py");
     // self.item = X() in __init__; self.item.x_method() in use_item
     // The analyzer tracks attribute assignment via set_attribute.
-    assert!(has_uses_edge(&cg, "__init__", "X"),
-        "self.item = X() should track constructor call");
+    assert!(
+        has_uses_edge(&cg, "__init__", "X"),
+        "self.item = X() should track constructor call"
+    );
 }
 
 #[test]
 fn test_binding_aug_assign() {
     let cg = make_fixture_graph("binding_coverage.py");
-    assert!(has_uses_edge(&cg, "aug_assign", "X") || has_uses_edge(&cg, "aug_assign", "Y"),
-        "augmented assignment should produce edge to constructor");
+    assert!(
+        has_uses_edge(&cg, "aug_assign", "X") || has_uses_edge(&cg, "aug_assign", "Y"),
+        "augmented assignment should produce edge to constructor"
+    );
 }
 
 // ===================================================================
@@ -713,32 +867,43 @@ fn test_resolution_chained_attr() {
     let cg = make_fixture_graph("resolution_coverage.py");
     // Chained attribute access: o.inner.deep_method()
     // At minimum, the constructor and attribute access are tracked.
-    assert!(has_uses_edge(&cg, "chained_attr", "Outer"),
-        "chained attr should track constructor");
-    assert!(has_uses_edge(&cg, "chained_attr", "inner") || has_uses_edge(&cg, "chained_attr", "deep_method"),
-        "chained attr should track attribute access");
+    assert!(
+        has_uses_edge(&cg, "chained_attr", "Outer"),
+        "chained attr should track constructor"
+    );
+    assert!(
+        has_uses_edge(&cg, "chained_attr", "inner")
+            || has_uses_edge(&cg, "chained_attr", "deep_method"),
+        "chained attr should track attribute access"
+    );
 }
 
 #[test]
 fn test_resolution_call_then_attr() {
     let cg = make_fixture_graph("resolution_coverage.py");
     // Outer().inner.deep_method() — call then attribute chain
-    assert!(has_uses_edge(&cg, "call_then_attr", "Outer"),
-        "call-then-attr should track constructor");
+    assert!(
+        has_uses_edge(&cg, "call_then_attr", "Outer"),
+        "call-then-attr should track constructor"
+    );
 }
 
 #[test]
 fn test_resolution_mro_grandchild() {
     let cg = make_fixture_graph("resolution_coverage.py");
-    assert!(has_uses_edge(&cg, "mro_grandchild", "inherited"),
-        "GrandChild.inherited() should resolve via MRO to GrandParent");
+    assert!(
+        has_uses_edge(&cg, "mro_grandchild", "inherited"),
+        "GrandChild.inherited() should resolve via MRO to GrandParent"
+    );
 }
 
 #[test]
 fn test_resolution_subscript_call() {
     let cg = make_fixture_graph("resolution_coverage.py");
-    assert!(has_uses_edge(&cg, "subscript_call", "deep_method"),
-        "items['key'].deep_method() should resolve through subscript");
+    assert!(
+        has_uses_edge(&cg, "subscript_call", "deep_method"),
+        "items['key'].deep_method() should resolve through subscript"
+    );
 }
 
 // ===================================================================
@@ -750,24 +915,32 @@ fn test_postprocess_cull_inherited() {
     let cg = make_fixture_graph("postprocess_effects.py");
     // caller_uses_child calls c.inherited_method() — after cull_inherited,
     // the edge should target a concrete method, not be duplicated.
-    assert!(has_uses_edge(&cg, "caller_uses_child", "inherited_method"),
-        "inherited method call must resolve");
-    assert!(has_uses_edge(&cg, "caller_uses_child", "own_method"),
-        "own method call must resolve");
+    assert!(
+        has_uses_edge(&cg, "caller_uses_child", "inherited_method"),
+        "inherited method call must resolve"
+    );
+    assert!(
+        has_uses_edge(&cg, "caller_uses_child", "own_method"),
+        "own method call must resolve"
+    );
 }
 
 #[test]
 fn test_postprocess_collapse_inner_lambda() {
     let cg = make_fixture_graph("postprocess_effects.py");
-    assert!(has_uses_edge(&cg, "caller_with_lambda", "own_method"),
-        "lambda body edges should collapse into parent function");
+    assert!(
+        has_uses_edge(&cg, "caller_with_lambda", "own_method"),
+        "lambda body edges should collapse into parent function"
+    );
 }
 
 #[test]
 fn test_postprocess_collapse_inner_listcomp() {
     let cg = make_fixture_graph("postprocess_effects.py");
-    assert!(has_uses_edge(&cg, "caller_with_listcomp", "Child"),
-        "listcomp edges should collapse into parent function");
+    assert!(
+        has_uses_edge(&cg, "caller_with_listcomp", "Child"),
+        "listcomp edges should collapse into parent function"
+    );
 }
 
 #[test]
@@ -777,8 +950,11 @@ fn test_postprocess_resolve_imports() {
     // submodule1 does: from test_code.subpackage1 import A
     // After resolve_imports, the edge should point to a concrete node.
     let uses = get_uses(&cg, "submodule1");
-    assert!(uses.contains("A") || uses.contains("subpackage1"),
-        "import resolution must produce concrete edge, got: {:?}", uses);
+    assert!(
+        uses.contains("A") || uses.contains("subpackage1"),
+        "import resolution must produce concrete edge, got: {:?}",
+        uses
+    );
 }
 
 #[test]
@@ -786,11 +962,16 @@ fn test_postprocess_changes_graph() {
     // Verify postprocessing is not a no-op: the full test_code dir graph
     // should have defined nodes that are Module-flavored (postprocess keeps these).
     let cg = make_call_graph(&test_code_dir());
-    let module_count = cg.nodes_arena.iter()
+    let module_count = cg
+        .nodes_arena
+        .iter()
         .enumerate()
         .filter(|(id, n)| n.flavor == pycg_rs::node::Flavor::Module && cg.defined.contains(id))
         .count();
-    assert!(module_count >= 3, "postprocessing should keep module nodes defined, got {module_count}");
+    assert!(
+        module_count >= 3,
+        "postprocessing should keep module nodes defined, got {module_count}"
+    );
 }
 
 // ===================================================================
@@ -800,10 +981,14 @@ fn test_postprocess_changes_graph() {
 #[test]
 fn test_import_relative_resolution() {
     let cg = make_fixture_dir_graph("import_coverage");
-    assert!(has_uses_edge(&cg, "caller", "sibling_func"),
-        "relative import from .sibling should resolve sibling_func");
-    assert!(has_uses_edge(&cg, "caller", "deep_func"),
-        "relative import from .deep.inner should resolve deep_func");
+    assert!(
+        has_uses_edge(&cg, "caller", "sibling_func"),
+        "relative import from .sibling should resolve sibling_func"
+    );
+    assert!(
+        has_uses_edge(&cg, "caller", "deep_func"),
+        "relative import from .deep.inner should resolve deep_func"
+    );
 }
 
 #[test]
@@ -813,7 +998,8 @@ fn test_import_module_reference() {
     let uses = get_uses(&cg, "user");
     assert!(
         uses.iter().any(|n| n.contains("sibling")),
-        "from . import sibling should create module edge, got: {:?}", uses
+        "from . import sibling should create module edge, got: {:?}",
+        uses
     );
 }
 
@@ -824,7 +1010,8 @@ fn test_visit_import_produces_module_edge() {
     let uses = get_uses(&cg, "submodule2");
     assert!(
         uses.iter().any(|n| n.contains("submodule1")),
-        "import statement should produce uses edge to module, got: {:?}", uses
+        "import statement should produce uses edge to module, got: {:?}",
+        uses
     );
 }
 
@@ -847,9 +1034,16 @@ fn test_get_module_name_init_file() {
     use pycg_rs::analyzer::get_module_name;
     let tc = test_code_dir();
     let root = tc.parent().unwrap().to_string_lossy().to_string();
-    let file = tc.join("subpackage1").join("__init__.py").to_string_lossy().to_string();
+    let file = tc
+        .join("subpackage1")
+        .join("__init__.py")
+        .to_string_lossy()
+        .to_string();
     let name = get_module_name(&file, Some(&root));
-    assert_eq!(name, "test_code.subpackage1", "init file should map to package: {name}");
+    assert_eq!(
+        name, "test_code.subpackage1",
+        "init file should map to package: {name}"
+    );
 }
 
 #[test]
@@ -857,20 +1051,37 @@ fn test_get_module_name_nested() {
     use pycg_rs::analyzer::get_module_name;
     let tc = test_code_dir();
     let root = tc.parent().unwrap().to_string_lossy().to_string();
-    let file = tc.join("subpackage1").join("submodule1.py").to_string_lossy().to_string();
+    let file = tc
+        .join("subpackage1")
+        .join("submodule1.py")
+        .to_string_lossy()
+        .to_string();
     let name = get_module_name(&file, Some(&root));
-    assert_eq!(name, "test_code.subpackage1.submodule1", "nested module: {name}");
+    assert_eq!(
+        name, "test_code.subpackage1.submodule1",
+        "nested module: {name}"
+    );
 }
 
 #[test]
 fn test_get_module_name_no_root() {
     use pycg_rs::analyzer::get_module_name;
     let tc = test_code_dir();
-    let file = tc.join("subpackage1").join("submodule1.py").to_string_lossy().to_string();
+    let file = tc
+        .join("subpackage1")
+        .join("submodule1.py")
+        .to_string_lossy()
+        .to_string();
     let name = get_module_name(&file, None);
     // Without root, walk-up should still find test_code package
-    assert!(name.contains("subpackage1"), "should contain package: {name}");
-    assert!(name.ends_with("submodule1"), "should end with module: {name}");
+    assert!(
+        name.contains("subpackage1"),
+        "should contain package: {name}"
+    );
+    assert!(
+        name.ends_with("submodule1"),
+        "should end with module: {name}"
+    );
 }
 
 // ===================================================================
@@ -879,15 +1090,18 @@ fn test_get_module_name_no_root() {
 
 #[test]
 fn test_node_equality_and_hash() {
-    use pycg_rs::node::{Node, Flavor};
+    use pycg_rs::node::{Flavor, Node};
     use std::collections::HashSet;
 
     let a = Node::new(Some("pkg"), "Foo", Flavor::Class);
     let b = Node::new(Some("pkg"), "Foo", Flavor::Function); // same ns+name, different flavor
-    let c = Node::new(Some("other"), "Foo", Flavor::Class);  // different namespace
+    let c = Node::new(Some("other"), "Foo", Flavor::Class); // different namespace
 
     // PartialEq only checks namespace + name
-    assert_eq!(a, b, "same namespace+name should be equal regardless of flavor");
+    assert_eq!(
+        a, b,
+        "same namespace+name should be equal regardless of flavor"
+    );
     assert_ne!(a, c, "different namespace should not be equal");
 
     // Hash consistency
@@ -899,7 +1113,7 @@ fn test_node_equality_and_hash() {
 
 #[test]
 fn test_node_display_and_short_name() {
-    use pycg_rs::node::{Node, Flavor};
+    use pycg_rs::node::{Flavor, Node};
 
     let n = Node::new(Some("pkg.sub"), "func", Flavor::Function);
     assert_eq!(format!("{n}"), "pkg.sub.func");
@@ -945,19 +1159,35 @@ fn test_dot_output_indent_and_edges() {
         annotated: true,
     };
     let vg = VisualGraph::from_call_graph(
-        &cg.nodes_arena, &cg.defined, &cg.defines_edges, &cg.uses_edges, &opts,
+        &cg.nodes_arena,
+        &cg.defined,
+        &cg.defines_edges,
+        &cg.uses_edges,
+        &opts,
     );
     let dot = writer::write_dot(&vg, &["rankdir=TB".to_string()]);
 
     // Nodes should be indented with spaces
-    assert!(dot.lines().any(|l| l.starts_with("    ") && l.contains("label=")),
-        "nodes should be indented");
+    assert!(
+        dot.lines()
+            .any(|l| l.starts_with("    ") && l.contains("label=")),
+        "nodes should be indented"
+    );
     // Uses edges should be solid
-    assert!(dot.contains("style=\"solid\""), "uses edges should be solid");
+    assert!(
+        dot.contains("style=\"solid\""),
+        "uses edges should be solid"
+    );
     // Defines edges should be dashed
-    assert!(dot.contains("style=\"dashed\""), "defines edges should be dashed");
+    assert!(
+        dot.contains("style=\"dashed\""),
+        "defines edges should be dashed"
+    );
     // Annotated labels should contain file info
-    assert!(dot.contains("stmt_coverage"), "annotated labels should contain filename");
+    assert!(
+        dot.contains("stmt_coverage"),
+        "annotated labels should contain filename"
+    );
 }
 
 #[test]
@@ -971,7 +1201,11 @@ fn test_tgf_output_structure() {
         annotated: false,
     };
     let vg = VisualGraph::from_call_graph(
-        &cg.nodes_arena, &cg.defined, &cg.defines_edges, &cg.uses_edges, &opts,
+        &cg.nodes_arena,
+        &cg.defined,
+        &cg.defines_edges,
+        &cg.uses_edges,
+        &opts,
     );
     let tgf = writer::write_tgf(&vg);
     let parts: Vec<&str> = tgf.splitn(2, '#').collect();
@@ -985,7 +1219,10 @@ fn test_tgf_output_structure() {
     // Each edge line should have "src tgt label"
     for line in &edge_lines {
         let fields: Vec<&str> = line.split_whitespace().collect();
-        assert!(fields.len() >= 3, "edge line should have src, tgt, label: {line}");
+        assert!(
+            fields.len() >= 3,
+            "edge line should have src, tgt, label: {line}"
+        );
     }
 }
 
@@ -1000,15 +1237,25 @@ fn test_text_output_structure() {
         annotated: false,
     };
     let vg = VisualGraph::from_call_graph(
-        &cg.nodes_arena, &cg.defined, &cg.defines_edges, &cg.uses_edges, &opts,
+        &cg.nodes_arena,
+        &cg.defined,
+        &cg.defines_edges,
+        &cg.uses_edges,
+        &opts,
     );
     let text = writer::write_text(&vg);
     // Should have [U] and [D] tags
     assert!(text.contains("[U]"), "text output should have uses edges");
-    assert!(text.contains("[D]"), "text output should have defines edges");
+    assert!(
+        text.contains("[D]"),
+        "text output should have defines edges"
+    );
     // Indented edges
-    assert!(text.lines().any(|l| l.starts_with("    [U]") || l.starts_with("    [D]")),
-        "edges should be indented under their source node");
+    assert!(
+        text.lines()
+            .any(|l| l.starts_with("    [U]") || l.starts_with("    [D]")),
+        "edges should be indented under their source node"
+    );
 }
 
 #[test]
@@ -1022,13 +1269,23 @@ fn test_dot_grouped_subgraph_indent() {
         annotated: false,
     };
     let vg = VisualGraph::from_call_graph(
-        &cg.nodes_arena, &cg.defined, &cg.defines_edges, &cg.uses_edges, &opts,
+        &cg.nodes_arena,
+        &cg.defined,
+        &cg.defines_edges,
+        &cg.uses_edges,
+        &opts,
     );
     let dot = writer::write_dot(&vg, &["rankdir=TB".to_string()]);
-    assert!(dot.contains("subgraph cluster_"), "grouped output must have subgraphs");
+    assert!(
+        dot.contains("subgraph cluster_"),
+        "grouped output must have subgraphs"
+    );
     // Subgraph nodes should be doubly indented
-    assert!(dot.lines().any(|l| l.starts_with("        ") && l.contains("label=")),
-        "subgraph nodes should be more deeply indented");
+    assert!(
+        dot.lines()
+            .any(|l| l.starts_with("        ") && l.contains("label=")),
+        "subgraph nodes should be more deeply indented"
+    );
 }
 
 // ===================================================================
@@ -1041,21 +1298,31 @@ fn test_hls_to_rgb_varied() {
 
     // Green (h=0.333)
     let (r, g, b) = hls_to_rgb(0.333, 0.5, 1.0);
-    assert!(g > r && g > b, "green hue should have highest green channel: ({r}, {g}, {b})");
+    assert!(
+        g > r && g > b,
+        "green hue should have highest green channel: ({r}, {g}, {b})"
+    );
 
     // Blue (h=0.667)
     let (r, g, b) = hls_to_rgb(0.667, 0.5, 1.0);
-    assert!(b > r && b > g, "blue hue should have highest blue channel: ({r}, {g}, {b})");
+    assert!(
+        b > r && b > g,
+        "blue hue should have highest blue channel: ({r}, {g}, {b})"
+    );
 
     // Low saturation should be grayish
     let (r, g, b) = hls_to_rgb(0.0, 0.5, 0.1);
-    assert!((r - g).abs() < 0.15 && (g - b).abs() < 0.15,
-        "low saturation should be near-gray: ({r}, {g}, {b})");
+    assert!(
+        (r - g).abs() < 0.15 && (g - b).abs() < 0.15,
+        "low saturation should be near-gray: ({r}, {g}, {b})"
+    );
 
     // High lightness should be near-white
     let (r, g, b) = hls_to_rgb(0.5, 0.95, 1.0);
-    assert!(r > 0.85 && g > 0.85 && b > 0.85,
-        "high lightness should be near-white: ({r}, {g}, {b})");
+    assert!(
+        r > 0.85 && g > 0.85 && b > 0.85,
+        "high lightness should be near-white: ({r}, {g}, {b})"
+    );
 
     // rgb_hex: verify format
     let hex = rgb_hex(1.0, 0.0, 0.0);
@@ -1066,7 +1333,10 @@ fn test_hls_to_rgb_varied() {
 
     // rgba_hex: verify alpha channel
     let hex = rgba_hex(1.0, 0.0, 0.0, 0.5);
-    assert!(hex.starts_with("#ff0000"), "rgba red should start with #ff0000: {hex}");
+    assert!(
+        hex.starts_with("#ff0000"),
+        "rgba red should start with #ff0000: {hex}"
+    );
     assert_eq!(hex.len(), 9, "rgba hex should be 9 chars: {hex}");
 }
 
@@ -1086,8 +1356,16 @@ fn test_performance() {
     }
     let elapsed = start.elapsed();
     let per_run = elapsed / 100;
-    eprintln!("Average analysis time: {:?} (100 runs over {} files)", per_run, files.len());
-    assert!(per_run.as_millis() < 200, "Analysis too slow: {:?}", per_run);
+    eprintln!(
+        "Average analysis time: {:?} (100 runs over {} files)",
+        per_run,
+        files.len()
+    );
+    assert!(
+        per_run.as_millis() < 200,
+        "Analysis too slow: {:?}",
+        per_run
+    );
 }
 
 // ===================================================================
@@ -1177,7 +1455,15 @@ fn analyze_corpus(dir: &std::path::Path) -> (CallGraph, CorpusStats) {
         uses_edge_count
     );
 
-    (cg, CorpusStats { modules, classes, functions, uses_edge_count })
+    (
+        cg,
+        CorpusStats {
+            modules,
+            classes,
+            functions,
+            uses_edge_count,
+        },
+    )
 }
 
 /// Assert that `stats` meets the provided lower bounds.  All bounds must be
@@ -1277,8 +1563,7 @@ fn make_single_fixture_graph(fixture_name: &str) -> CallGraph {
         .join("test_code")
         .join(fixture_name);
     let files = vec![path.to_string_lossy().to_string()];
-    CallGraph::new(&files, None)
-        .unwrap_or_else(|e| panic!("failed to parse {fixture_name}: {e}"))
+    CallGraph::new(&files, None).unwrap_or_else(|e| panic!("failed to parse {fixture_name}: {e}"))
 }
 
 /// Build a CallGraph from multiple accuracy fixture files with `tests/` as root.
@@ -1565,15 +1850,36 @@ fn test_accuracy_starred_unpack_constructors_tracked() {
     // All four constructors must be tracked in uses regardless of star position.
     let cg = make_features_graph();
     // star_at_end: a, b, *c = Alpha(), Beta(), Gamma(), Delta()
-    assert!(has_uses_edge(&cg, "star_at_end", "Alpha"), "star_at_end must use Alpha");
-    assert!(has_uses_edge(&cg, "star_at_end", "Beta"),  "star_at_end must use Beta");
-    assert!(has_uses_edge(&cg, "star_at_end", "Gamma"), "star_at_end must use Gamma");
-    assert!(has_uses_edge(&cg, "star_at_end", "Delta"), "star_at_end must use Delta");
+    assert!(
+        has_uses_edge(&cg, "star_at_end", "Alpha"),
+        "star_at_end must use Alpha"
+    );
+    assert!(
+        has_uses_edge(&cg, "star_at_end", "Beta"),
+        "star_at_end must use Beta"
+    );
+    assert!(
+        has_uses_edge(&cg, "star_at_end", "Gamma"),
+        "star_at_end must use Gamma"
+    );
+    assert!(
+        has_uses_edge(&cg, "star_at_end", "Delta"),
+        "star_at_end must use Delta"
+    );
     // star_in_middle: a, *b, c = Alpha(), Beta(), Gamma(), Delta()
-    assert!(has_uses_edge(&cg, "star_in_middle", "Alpha"), "star_in_middle must use Alpha");
-    assert!(has_uses_edge(&cg, "star_in_middle", "Delta"), "star_in_middle must use Delta");
+    assert!(
+        has_uses_edge(&cg, "star_in_middle", "Alpha"),
+        "star_in_middle must use Alpha"
+    );
+    assert!(
+        has_uses_edge(&cg, "star_in_middle", "Delta"),
+        "star_in_middle must use Delta"
+    );
     // star_at_start: *a, b = Alpha(), Beta(), Gamma()
-    assert!(has_uses_edge(&cg, "star_at_start", "Gamma"), "star_at_start must use Gamma");
+    assert!(
+        has_uses_edge(&cg, "star_at_start", "Gamma"),
+        "star_at_start must use Gamma"
+    );
 }
 
 /// Positional starred-unpack targets resolve the correct class's methods.
@@ -1923,7 +2229,10 @@ fn test_inv1_conditional_rebind_both_branches() {
         "conditional_rebind_caller should use method (branch join), got: {uses:?}"
     );
     let caller_ids = find_nodes_by_name(&cg, "conditional_rebind_caller");
-    assert!(!caller_ids.is_empty(), "conditional_rebind_caller node must exist");
+    assert!(
+        !caller_ids.is_empty(),
+        "conditional_rebind_caller node must exist"
+    );
     let method_nodes: Vec<usize> = find_nodes_by_name(&cg, "method")
         .into_iter()
         .filter(|&id| {
@@ -2305,8 +2614,7 @@ fn has_concrete_uses_edge_for_name(cg: &CallGraph, from_name: &str, short_name: 
     for &fid in find_nodes_by_name(cg, from_name).iter() {
         if let Some(targets) = cg.uses_edges.get(&fid) {
             for &tid in targets {
-                if cg.nodes_arena[tid].name == short_name
-                    && cg.nodes_arena[tid].namespace.is_some()
+                if cg.nodes_arena[tid].name == short_name && cg.nodes_arena[tid].namespace.is_some()
                 {
                     return true;
                 }
@@ -2365,10 +2673,7 @@ fn test_expand_unknowns_fanout_count_bounded() {
 /// after `from star_all_src import *`.
 #[test]
 fn test_star_import_all_exports_listed_names_resolve() {
-    let cg = make_multi_fixture_graph(&[
-        "test_code/star_all_src.py",
-        "test_code/star_all_user.py",
-    ]);
+    let cg = make_multi_fixture_graph(&["test_code/star_all_src.py", "test_code/star_all_user.py"]);
     // public_exported is in __all__ → must resolve concretely.
     assert!(
         has_concrete_uses_edge(&cg, "all_aware_caller", "public_exported"),
@@ -2386,10 +2691,7 @@ fn test_star_import_all_exports_listed_names_resolve() {
 /// after `from star_all_src import *`.
 #[test]
 fn test_star_import_all_excludes_unlisted_public() {
-    let cg = make_multi_fixture_graph(&[
-        "test_code/star_all_src.py",
-        "test_code/star_all_user.py",
-    ]);
+    let cg = make_multi_fixture_graph(&["test_code/star_all_src.py", "test_code/star_all_user.py"]);
     // public_not_exported is public but NOT in __all__ → must not resolve concretely.
     assert!(
         !has_concrete_uses_edge(&cg, "all_aware_caller", "public_not_exported"),
@@ -2403,10 +2705,7 @@ fn test_star_import_all_excludes_unlisted_public() {
 /// reattach it (INV-3).
 #[test]
 fn test_star_import_all_excludes_unlisted_private() {
-    let cg = make_multi_fixture_graph(&[
-        "test_code/star_all_src.py",
-        "test_code/star_all_user.py",
-    ]);
+    let cg = make_multi_fixture_graph(&["test_code/star_all_src.py", "test_code/star_all_user.py"]);
     // _private_not_exported is private and NOT in __all__ → must not resolve.
     assert!(
         !has_concrete_uses_edge(&cg, "all_aware_caller", "_private_not_exported"),

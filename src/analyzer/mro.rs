@@ -26,10 +26,7 @@ pub(super) fn resolve_mro(
     fn c3_merge(lists: &mut [Vec<NodeId>]) -> Vec<NodeId> {
         let mut out = Vec::new();
         loop {
-            let heads: Vec<NodeId> = lists
-                .iter()
-                .filter_map(|l| head(l))
-                .collect();
+            let heads: Vec<NodeId> = lists.iter().filter_map(|l| head(l)).collect();
             if heads.is_empty() {
                 break;
             }
@@ -60,8 +57,7 @@ pub(super) fn resolve_mro(
             return cached.clone();
         }
 
-        let result = if !class_base_nodes.contains_key(&node)
-            || class_base_nodes[&node].is_empty()
+        let result = if !class_base_nodes.contains_key(&node) || class_base_nodes[&node].is_empty()
         {
             vec![node]
         } else {

@@ -272,9 +272,10 @@ impl VisualGraph {
             if options.grouped {
                 Box::new(|n: &Node| {
                     if get_level(n) >= 1
-                        && let (Some(fname), Some(line)) = (&n.filename, n.line) {
-                            return format!("{}\\n({}:{})", n.name, fname, line);
-                        }
+                        && let (Some(fname), Some(line)) = (&n.filename, n.line)
+                    {
+                        return format!("{}\\n({}:{})", n.name, fname, line);
+                    }
                     n.name.clone()
                 })
             } else {
