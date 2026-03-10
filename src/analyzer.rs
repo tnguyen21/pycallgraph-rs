@@ -685,7 +685,11 @@ impl CallGraph {
         } else {
             String::new()
         };
-        let name = self.name_stack.last().unwrap().clone();
+        let name = self
+            .name_stack
+            .last()
+            .expect("name_stack must not be empty during AST walk")
+            .clone();
         self.get_node(Some(&namespace), &name, Flavor::Namespace)
     }
 
@@ -694,7 +698,9 @@ impl CallGraph {
         let node = &self.nodes_arena[node_id];
         let (ns, name) = if let Some(ref namespace) = node.namespace {
             if namespace.contains('.') {
-                let (parent_ns, parent_name) = namespace.rsplit_once('.').unwrap();
+                let (parent_ns, parent_name) = namespace
+                    .rsplit_once('.')
+                    .expect("namespace contains '.' (checked above)");
                 (parent_ns.to_string(), parent_name.to_string())
             } else {
                 (String::new(), namespace.clone())
@@ -836,7 +842,10 @@ impl CallGraph {
             if let Some(scope) = self.scopes.get(scope_key)
                 && scope.defs.contains_key(name)
             {
-                let scope = self.scopes.get_mut(scope_key).unwrap();
+                let scope = self
+                    .scopes
+                    .get_mut(scope_key)
+                    .expect("scope confirmed to exist above");
                 if let Some(id) = value {
                     scope.defs.entry(name.to_string()).or_default().insert(id);
                 }
@@ -868,7 +877,10 @@ impl CallGraph {
             if let Some(scope) = self.scopes.get(scope_key)
                 && scope.defs.contains_key(name)
             {
-                let scope = self.scopes.get_mut(scope_key).unwrap();
+                let scope = self
+                    .scopes
+                    .get_mut(scope_key)
+                    .expect("scope confirmed to exist above");
                 scope
                     .containers
                     .entry(name.to_string())
@@ -3166,7 +3178,7 @@ impl CallGraph {
             // Strategy 2: uses-edge walk (legacy path for external modules).
             let to_id = if let Some(targets) = self.uses_edges.get(&from_id) {
                 if targets.len() == 1 {
-                    *targets.iter().next().unwrap()
+                    *targets.iter().next().expect("len == 1 checked above")
                 } else {
                     continue;
                 }
