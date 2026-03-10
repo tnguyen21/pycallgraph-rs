@@ -13,10 +13,10 @@ name = "pycg_rs"
 path = "src/lib.rs"
 
 [dependencies]
-ruff_python_ast = { git = "https://github.com/astral-sh/ruff.git" }
-ruff_python_parser = { git = "https://github.com/astral-sh/ruff.git" }
-ruff_source_file = { git = "https://github.com/astral-sh/ruff.git" }
-ruff_text_size = { git = "https://github.com/astral-sh/ruff.git" }
+ruff_python_ast = { git = "https://github.com/astral-sh/ruff.git", rev = "359981b" }
+ruff_python_parser = { git = "https://github.com/astral-sh/ruff.git", rev = "359981b" }
+ruff_source_file = { git = "https://github.com/astral-sh/ruff.git", rev = "359981b" }
+ruff_text_size = { git = "https://github.com/astral-sh/ruff.git", rev = "359981b" }
 petgraph = "0.7"
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"
