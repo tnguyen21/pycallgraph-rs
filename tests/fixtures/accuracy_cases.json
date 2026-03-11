@@ -258,6 +258,33 @@
       ]
     },
     {
+      "id": "imports.star_import_concrete_targets",
+      "category": "imports",
+      "files": [
+        "tests/test_code/accuracy_star_src.py",
+        "tests/test_code/accuracy_star_user.py"
+      ],
+      "root": "tests",
+      "expectations": [
+        {
+          "kind": "uses",
+          "source": "test_code.accuracy_star_user.star_import_caller",
+          "source_match": "full",
+          "target": "test_code.accuracy_star_src.exported_func1",
+          "target_match": "concrete_full",
+          "present": true
+        },
+        {
+          "kind": "uses",
+          "source": "test_code.accuracy_star_user.star_import_caller",
+          "source_match": "full",
+          "target": "test_code.accuracy_star_src.exported_func2",
+          "target_match": "concrete_full",
+          "present": true
+        }
+      ]
+    },
+    {
       "id": "imports.star_import_all_exports",
       "category": "imports",
       "files": [
@@ -335,6 +362,34 @@
           "kind": "uses",
           "source": "reexport_caller",
           "target": "reexport_func",
+          "present": true
+        }
+      ]
+    },
+    {
+      "id": "imports.reexport_concrete_targets",
+      "category": "imports",
+      "files": [
+        "tests/test_code/accuracy_reexport/__init__.py",
+        "tests/test_code/accuracy_reexport/impl.py",
+        "tests/test_code/accuracy_reexport/user.py"
+      ],
+      "root": "tests",
+      "expectations": [
+        {
+          "kind": "uses",
+          "source": "test_code.accuracy_reexport",
+          "source_match": "full",
+          "target": "test_code.accuracy_reexport.impl.reexport_func",
+          "target_match": "concrete_full",
+          "present": true
+        },
+        {
+          "kind": "uses",
+          "source": "test_code.accuracy_reexport.user.reexport_caller",
+          "source_match": "full",
+          "target": "test_code.accuracy_reexport.impl.reexport_func",
+          "target_match": "concrete_full",
           "present": true
         }
       ]
@@ -496,6 +551,98 @@
           "target_match": "concrete_short",
           "present": true,
           "min_matches": 2
+        }
+      ]
+    },
+    {
+      "id": "precision.no_spurious_fanout",
+      "category": "precision",
+      "files": ["tests/test_code/features.py"],
+      "expectations": [
+        {
+          "kind": "uses",
+          "source": "test_code.features.precision_caller",
+          "source_match": "full",
+          "target": "test_code.features.WorkerA.do_work",
+          "target_match": "concrete_full",
+          "present": true
+        },
+        {
+          "kind": "uses",
+          "source": "test_code.features.precision_caller",
+          "source_match": "full",
+          "target": "test_code.features.WorkerB.do_work",
+          "target_match": "concrete_full",
+          "present": false
+        }
+      ]
+    },
+    {
+      "id": "protocol.del_edges",
+      "category": "protocols",
+      "files": ["tests/test_code/features.py"],
+      "expectations": [
+        {
+          "kind": "uses",
+          "source": "test_code.features.clear_entry",
+          "source_match": "full",
+          "target": "test_code.features.Registry.__delattr__",
+          "target_match": "concrete_full",
+          "present": true
+        },
+        {
+          "kind": "uses",
+          "source": "test_code.features.remove_item",
+          "source_match": "full",
+          "target": "test_code.features.Registry.__delitem__",
+          "target_match": "concrete_full",
+          "present": true
+        }
+      ]
+    },
+    {
+      "id": "builtins.str_repr",
+      "category": "builtins",
+      "files": ["tests/test_code/features.py"],
+      "expectations": [
+        {
+          "kind": "uses",
+          "source": "test_code.features.call_str_repr",
+          "source_match": "full",
+          "target": "test_code.features.Printable.__str__",
+          "target_match": "concrete_full",
+          "present": true
+        },
+        {
+          "kind": "uses",
+          "source": "test_code.features.call_str_repr",
+          "source_match": "full",
+          "target": "test_code.features.Printable.__repr__",
+          "target_match": "concrete_full",
+          "present": true
+        }
+      ]
+    },
+    {
+      "id": "unknowns.expand_unknowns_fanout",
+      "category": "unknowns",
+      "files": ["tests/test_code/unknown_expansion.py"],
+      "expectations": [
+        {
+          "kind": "uses",
+          "source": "test_code.unknown_expansion.wildcard_only",
+          "source_match": "full",
+          "target": "test_code.unknown_expansion.WorkerA.do_work",
+          "target_match": "concrete_full",
+          "present": true
+        },
+        {
+          "kind": "uses",
+          "source": "test_code.unknown_expansion.wildcard_only",
+          "source_match": "full",
+          "target": "test_code.unknown_expansion.WorkerB.do_work",
+          "target_match": "concrete_full",
+          "present": true
         }
       ]
     }

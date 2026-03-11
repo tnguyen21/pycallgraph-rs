@@ -795,7 +795,11 @@ fn test_inv1_reexport_chain_resolves_concrete_node() {
         "test_code/accuracy_reexport/user.py",
     ]);
     assert!(
-        has_concrete_uses_edge(&cg, "reexport_caller", "reexport_func"),
+        has_concrete_uses_edge_full(
+            &cg,
+            "test_code.accuracy_reexport.user.reexport_caller",
+            "test_code.accuracy_reexport.impl.reexport_func",
+        ),
         "reexport_caller must use reexport_func via a concrete (namespaced) node, \
          not a wildcard placeholder"
     );
@@ -812,7 +816,11 @@ fn test_inv1_reexport_package_node_concrete() {
         "test_code/accuracy_reexport/user.py",
     ]);
     assert!(
-        has_concrete_uses_edge(&cg, "accuracy_reexport", "reexport_func"),
+        has_concrete_uses_edge_full(
+            &cg,
+            "test_code.accuracy_reexport",
+            "test_code.accuracy_reexport.impl.reexport_func",
+        ),
         "the accuracy_reexport package node must concretely use reexport_func \
          (regression: copied import fact must not diverge from source)"
     );
@@ -832,12 +840,20 @@ fn test_inv2_star_import_concrete_nodes() {
         "test_code/accuracy_star_user.py",
     ]);
     assert!(
-        has_concrete_uses_edge(&cg, "star_import_caller", "exported_func1"),
+        has_concrete_uses_edge_full(
+            &cg,
+            "test_code.accuracy_star_user.star_import_caller",
+            "test_code.accuracy_star_src.exported_func1",
+        ),
         "star_import_caller must reach exported_func1 as a concrete node \
          (INV-2: star import static approximation)"
     );
     assert!(
-        has_concrete_uses_edge(&cg, "star_import_caller", "exported_func2"),
+        has_concrete_uses_edge_full(
+            &cg,
+            "test_code.accuracy_star_user.star_import_caller",
+            "test_code.accuracy_star_src.exported_func2",
+        ),
         "star_import_caller must reach exported_func2 as a concrete node \
          (INV-2: star import static approximation)"
     );
@@ -979,7 +995,11 @@ fn test_repr_builtin_emits_dunder_repr() {
 fn test_accuracy_decorator_uses_decorated_function() {
     let cg = make_single_fixture_graph("accuracy_decorator.py");
     assert!(
-        has_uses_edge(&cg, "simple_decorator", "simple_decorated"),
+        has_uses_edge_full(
+            &cg,
+            "test_code.accuracy_decorator.simple_decorator",
+            "test_code.accuracy_decorator.simple_decorated",
+        ),
         "simple_decorator should use simple_decorated (decorator receives function as argument)"
     );
 }
@@ -1116,12 +1136,20 @@ fn test_star_import_all_exports_listed_names_resolve() {
     let cg = make_multi_fixture_graph(&["test_code/star_all_src.py", "test_code/star_all_user.py"]);
     // public_exported is in __all__ → must resolve concretely.
     assert!(
-        has_concrete_uses_edge(&cg, "all_aware_caller", "public_exported"),
+        has_concrete_uses_edge_full(
+            &cg,
+            "test_code.star_all_user.all_aware_caller",
+            "test_code.star_all_src.public_exported",
+        ),
         "all_aware_caller must concretely use public_exported (listed in __all__)"
     );
     // _special_exported is private but explicitly in __all__ → must resolve.
     assert!(
-        has_concrete_uses_edge(&cg, "all_aware_caller", "_special_exported"),
+        has_concrete_uses_edge_full(
+            &cg,
+            "test_code.star_all_user.all_aware_caller",
+            "test_code.star_all_src._special_exported",
+        ),
         "all_aware_caller must concretely use _special_exported \
          (private but explicitly in __all__ — INV-1)"
     );
@@ -1170,7 +1198,11 @@ fn test_star_import_no_all_public_resolves() {
         "test_code/star_private_user.py",
     ]);
     assert!(
-        has_concrete_uses_edge(&cg, "privacy_checker", "public_func"),
+        has_concrete_uses_edge_full(
+            &cg,
+            "test_code.star_private_user.privacy_checker",
+            "test_code.star_private_src.public_func",
+        ),
         "privacy_checker must concretely use public_func \
          (public name, no __all__ — existing public star-import must keep working)"
     );

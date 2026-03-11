@@ -117,6 +117,34 @@ pub(crate) fn has_uses_edge(cg: &CallGraph, from_name: &str, to_name: &str) -> b
     false
 }
 
+/// Check if there is a uses edge from an exact fully-qualified source node to an exact
+/// fully-qualified target node.
+pub(crate) fn has_uses_edge_full(cg: &CallGraph, from_fqn: &str, to_fqn: &str) -> bool {
+    let from_ids: Vec<usize> = cg
+        .nodes_arena
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, node)| (node.get_name() == from_fqn).then_some(idx))
+        .collect();
+    let to_ids: Vec<usize> = cg
+        .nodes_arena
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, node)| (node.get_name() == to_fqn).then_some(idx))
+        .collect();
+
+    for fid in from_ids {
+        if let Some(targets) = cg.uses_edges.get(&fid) {
+            for tid in &to_ids {
+                if targets.contains(tid) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 pub(crate) fn make_features_graph() -> CallGraph {
     let features_file = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
@@ -176,6 +204,34 @@ pub(crate) fn has_concrete_uses_edge_for_name(
             for &tid in targets {
                 if cg.nodes_arena[tid].name == short_name && cg.nodes_arena[tid].namespace.is_some()
                 {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+pub(crate) fn has_concrete_uses_edge_full(cg: &CallGraph, from_fqn: &str, to_fqn: &str) -> bool {
+    let from_ids: Vec<usize> = cg
+        .nodes_arena
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, node)| (node.get_name() == from_fqn).then_some(idx))
+        .collect();
+    let to_ids: Vec<usize> = cg
+        .nodes_arena
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, node)| {
+            (node.get_name() == to_fqn && node.namespace.is_some()).then_some(idx)
+        })
+        .collect();
+
+    for fid in from_ids {
+        if let Some(targets) = cg.uses_edges.get(&fid) {
+            for tid in &to_ids {
+                if targets.contains(tid) {
                     return true;
                 }
             }
