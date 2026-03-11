@@ -1,0 +1,6 @@
+[project]
+name = "pycg-rs"
+
+[hive]
+backend = "claude"
+merge_queue_enabled = false

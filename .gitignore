@@ -17,7 +17,6 @@
 /report/
 
 # Local Codex/Hive state
-/.hive/
 /.hive-home/
 /.worktrees/
 
