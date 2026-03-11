@@ -2,16 +2,83 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use anyhow::{Result, bail};
-use clap::Parser;
+use clap::{Args, Parser, Subcommand};
 use walkdir::WalkDir;
 
 use pycg_rs::analyzer::CallGraph;
+use pycg_rs::query::{
+    self, MatchMode, QueryGraphMode, QueryRenderOptions, QueryResponse, TargetKind,
+};
 use pycg_rs::visgraph::{VisualGraph, VisualOptions};
 use pycg_rs::writer::{self, JsonGraphMode, JsonOutputOptions};
 
 #[derive(Parser)]
-#[command(name = "pycg", about = "Generate call graphs for Python programs")]
+#[command(
+    name = "pycg",
+    about = "Generate call graphs for Python programs",
+    subcommand_precedence_over_arg = true
+)]
 struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
+
+    /// Python source files or directories to analyze
+    files: Vec<PathBuf>,
+
+    /// Output format
+    #[arg(long, default_value = "dot")]
+    format: Format,
+
+    /// Draw defines edges
+    #[arg(long, short = 'd')]
+    defines: bool,
+
+    /// Draw uses edges
+    #[arg(long, short = 'u')]
+    uses: bool,
+
+    /// Color nodes by file
+    #[arg(long, short = 'c')]
+    colored: bool,
+
+    /// Group nodes by namespace
+    #[arg(long, short = 'g')]
+    grouped: bool,
+
+    /// Annotate nodes with file:line info
+    #[arg(long, short = 'a')]
+    annotated: bool,
+
+    /// Root directory for module name resolution
+    #[arg(long, short = 'r', global = true)]
+    root: Option<String>,
+
+    /// GraphViz rank direction
+    #[arg(long, default_value = "TB")]
+    rankdir: String,
+
+    /// Show module-level import dependencies instead of symbol-level call graph
+    #[arg(long, short = 'm')]
+    modules: bool,
+
+    /// Enable verbose logging
+    #[arg(long, short = 'v', action = clap::ArgAction::Count, global = true)]
+    verbose: u8,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    Analyze(AnalyzeArgs),
+    SymbolsIn(TargetQueryArgs),
+    Summary(TargetQueryArgs),
+    Callees(SymbolQueryArgs),
+    Callers(SymbolQueryArgs),
+    Neighbors(SymbolQueryArgs),
+    Path(PathQueryArgs),
+}
+
+#[derive(Args, Clone)]
+struct AnalyzeArgs {
     /// Python source files or directories to analyze
     #[arg(required = true)]
     files: Vec<PathBuf>,
@@ -40,10 +107,6 @@ struct Cli {
     #[arg(long, short = 'a')]
     annotated: bool,
 
-    /// Root directory for module name resolution
-    #[arg(long, short = 'r')]
-    root: Option<String>,
-
     /// GraphViz rank direction
     #[arg(long, default_value = "TB")]
     rankdir: String,
@@ -51,10 +114,6 @@ struct Cli {
     /// Show module-level import dependencies instead of symbol-level call graph
     #[arg(long, short = 'm')]
     modules: bool,
-
-    /// Enable verbose logging
-    #[arg(long, short = 'v', action = clap::ArgAction::Count)]
-    verbose: u8,
 }
 
 #[derive(Clone, clap::ValueEnum)]
@@ -63,6 +122,89 @@ enum Format {
     Tgf,
     Text,
     Json,
+}
+
+#[derive(Clone, clap::ValueEnum)]
+enum QueryFormat {
+    Text,
+    Json,
+}
+
+#[derive(Clone, clap::ValueEnum)]
+enum MatchModeArg {
+    Exact,
+    Suffix,
+}
+
+#[derive(Clone, clap::ValueEnum)]
+enum TargetKindArg {
+    Path,
+    Module,
+}
+
+#[derive(Args, Clone)]
+struct QueryCommonArgs {
+    /// Output format
+    #[arg(long, default_value = "json")]
+    format: QueryFormat,
+}
+
+#[derive(Args, Clone)]
+struct TargetQueryArgs {
+    /// File, directory, or module target to query
+    target: String,
+
+    /// Python source files or directories to analyze
+    #[arg(required = true)]
+    files: Vec<PathBuf>,
+
+    /// Interpret the target as a path or module name
+    #[arg(long)]
+    target_kind: Option<TargetKindArg>,
+
+    /// Query the module graph rather than the symbol graph
+    #[arg(long, short = 'm')]
+    modules: bool,
+
+    #[command(flatten)]
+    common: QueryCommonArgs,
+}
+
+#[derive(Args, Clone)]
+struct SymbolQueryArgs {
+    /// Canonical symbol name to query
+    symbol: String,
+
+    /// Python source files or directories to analyze
+    #[arg(required = true)]
+    files: Vec<PathBuf>,
+
+    /// Match mode for symbol lookup
+    #[arg(long, default_value = "exact")]
+    r#match: MatchModeArg,
+
+    #[command(flatten)]
+    common: QueryCommonArgs,
+}
+
+#[derive(Args, Clone)]
+struct PathQueryArgs {
+    /// Source canonical symbol name
+    source: String,
+
+    /// Target canonical symbol name
+    target: String,
+
+    /// Python source files or directories to analyze
+    #[arg(required = true)]
+    files: Vec<PathBuf>,
+
+    /// Match mode for symbol lookup
+    #[arg(long, default_value = "exact")]
+    r#match: MatchModeArg,
+
+    #[command(flatten)]
+    common: QueryCommonArgs,
 }
 
 fn collect_python_files(paths: &[PathBuf]) -> Vec<String> {
@@ -98,37 +240,197 @@ fn main() -> Result<()> {
     };
     env_logger::Builder::new().filter_level(log_level).init();
 
-    let files = collect_python_files(&cli.files);
+    let (output, should_fail) = match &cli.command {
+        Some(Command::Analyze(args)) => (run_analyze(args, cli.root.as_deref())?, false),
+        Some(Command::SymbolsIn(args)) => {
+            run_target_query(&args.files, cli.root.as_deref(), |cg, json_inputs| {
+                let response = query::symbols_in(
+                    &cg,
+                    &args.target,
+                    infer_target_kind(&args.target, args.target_kind.as_ref()),
+                    if args.modules {
+                        QueryGraphMode::Module
+                    } else {
+                        QueryGraphMode::Symbol
+                    },
+                    &QueryRenderOptions {
+                        analysis_root: cli.root.as_deref(),
+                        inputs: &json_inputs,
+                    },
+                );
+                Ok((
+                    render_query_response(&response, &args.common.format),
+                    response.is_error(),
+                ))
+            })?
+        }
+        Some(Command::Summary(args)) => {
+            run_target_query(&args.files, cli.root.as_deref(), |cg, json_inputs| {
+                let response = query::summary(
+                    &cg,
+                    &args.target,
+                    infer_target_kind(&args.target, args.target_kind.as_ref()),
+                    if args.modules {
+                        QueryGraphMode::Module
+                    } else {
+                        QueryGraphMode::Symbol
+                    },
+                    &QueryRenderOptions {
+                        analysis_root: cli.root.as_deref(),
+                        inputs: &json_inputs,
+                    },
+                );
+                Ok((
+                    render_query_response(&response, &args.common.format),
+                    response.is_error(),
+                ))
+            })?
+        }
+        Some(Command::Callees(args)) => {
+            run_target_query(&args.files, cli.root.as_deref(), |cg, json_inputs| {
+                let response = query::callees(
+                    &cg,
+                    &args.symbol,
+                    to_match_mode(&args.r#match),
+                    &QueryRenderOptions {
+                        analysis_root: cli.root.as_deref(),
+                        inputs: &json_inputs,
+                    },
+                );
+                Ok((
+                    render_query_response(&response, &args.common.format),
+                    response.is_error(),
+                ))
+            })?
+        }
+        Some(Command::Callers(args)) => {
+            run_target_query(&args.files, cli.root.as_deref(), |cg, json_inputs| {
+                let response = query::callers(
+                    &cg,
+                    &args.symbol,
+                    to_match_mode(&args.r#match),
+                    &QueryRenderOptions {
+                        analysis_root: cli.root.as_deref(),
+                        inputs: &json_inputs,
+                    },
+                );
+                Ok((
+                    render_query_response(&response, &args.common.format),
+                    response.is_error(),
+                ))
+            })?
+        }
+        Some(Command::Neighbors(args)) => {
+            run_target_query(&args.files, cli.root.as_deref(), |cg, json_inputs| {
+                let response = query::neighbors(
+                    &cg,
+                    &args.symbol,
+                    to_match_mode(&args.r#match),
+                    &QueryRenderOptions {
+                        analysis_root: cli.root.as_deref(),
+                        inputs: &json_inputs,
+                    },
+                );
+                Ok((
+                    render_query_response(&response, &args.common.format),
+                    response.is_error(),
+                ))
+            })?
+        }
+        Some(Command::Path(args)) => {
+            run_target_query(&args.files, cli.root.as_deref(), |cg, json_inputs| {
+                let response = query::path(
+                    &cg,
+                    &args.source,
+                    &args.target,
+                    to_match_mode(&args.r#match),
+                    &QueryRenderOptions {
+                        analysis_root: cli.root.as_deref(),
+                        inputs: &json_inputs,
+                    },
+                );
+                Ok((
+                    render_query_response(&response, &args.common.format),
+                    response.is_error(),
+                ))
+            })?
+        }
+        None => {
+            let args = AnalyzeArgs {
+                files: cli.files.clone(),
+                format: cli.format.clone(),
+                defines: cli.defines,
+                uses: cli.uses,
+                colored: cli.colored,
+                grouped: cli.grouped,
+                annotated: cli.annotated,
+                rankdir: cli.rankdir.clone(),
+                modules: cli.modules,
+            };
+            (run_analyze(&args, cli.root.as_deref())?, false)
+        }
+    };
+
+    let mut stdout = std::io::stdout().lock();
+    if let Err(e) = stdout.write_all(output.as_bytes())
+        && e.kind() != std::io::ErrorKind::BrokenPipe
+    {
+        return Err(e.into());
+    }
+    if should_fail {
+        bail!("query failed");
+    }
+    Ok(())
+}
+
+fn run_target_query<F>(paths: &[PathBuf], root: Option<&str>, render: F) -> Result<(String, bool)>
+where
+    F: FnOnce(CallGraph, Vec<String>) -> Result<(String, bool)>,
+{
+    let files = collect_python_files(paths);
     if files.is_empty() {
         bail!("No Python files found");
     }
-    let json_inputs: Vec<String> = cli
+    let json_inputs: Vec<String> = paths
+        .iter()
+        .map(|path| path.to_string_lossy().to_string())
+        .collect();
+    eprintln!("Analyzing {} Python files...", files.len());
+    let cg = CallGraph::new(&files, root)?;
+    render(cg, json_inputs)
+}
+
+fn run_analyze(args: &AnalyzeArgs, root: Option<&str>) -> Result<String> {
+    let files = collect_python_files(&args.files);
+    if files.is_empty() {
+        bail!("No Python files found");
+    }
+    let json_inputs: Vec<String> = args
         .files
         .iter()
         .map(|path| path.to_string_lossy().to_string())
         .collect();
 
-    // Default: show uses edges if neither --defines nor --uses specified
-    let (draw_defines, draw_uses) = if !cli.defines && !cli.uses {
+    let (draw_defines, draw_uses) = if !args.defines && !args.uses {
         (false, true)
     } else {
-        (cli.defines, cli.uses)
+        (args.defines, args.uses)
     };
 
     eprintln!("Analyzing {} Python files...", files.len());
-    let cg = CallGraph::new(&files, cli.root.as_deref())?;
+    let cg = CallGraph::new(&files, root)?;
 
     let options = VisualOptions {
         draw_defines,
         draw_uses,
-        colored: cli.colored,
-        grouped: cli.grouped,
-        annotated: cli.annotated,
+        colored: args.colored,
+        grouped: args.grouped,
+        annotated: args.annotated,
     };
 
-    let output = if matches!(cli.format, Format::Json) {
+    let output = if matches!(args.format, Format::Json) {
         // JSON bypasses the visual graph — serialize raw call graph data.
-        if cli.modules {
+        if args.modules {
             let (mod_nodes, mod_uses, mod_defined) = cg.derive_module_graph();
             writer::write_json(
                 &mod_nodes,
@@ -138,7 +440,7 @@ fn main() -> Result<()> {
                 &cg.diagnostics,
                 &JsonOutputOptions {
                     graph_mode: JsonGraphMode::Module,
-                    analysis_root: cli.root.as_deref(),
+                    analysis_root: root,
                     inputs: &json_inputs,
                 },
             )
@@ -151,13 +453,13 @@ fn main() -> Result<()> {
                 &cg.diagnostics,
                 &JsonOutputOptions {
                     graph_mode: JsonGraphMode::Symbol,
-                    analysis_root: cli.root.as_deref(),
+                    analysis_root: root,
                     inputs: &json_inputs,
                 },
             )
         }
     } else {
-        let vg = if cli.modules {
+        let vg = if args.modules {
             let (mod_nodes, mod_uses, mod_defined) = cg.derive_module_graph();
             let mod_options = VisualOptions {
                 draw_defines: false,
@@ -183,19 +485,46 @@ fn main() -> Result<()> {
             )
         };
 
-        match cli.format {
-            Format::Dot => writer::write_dot(&vg, &[format!("rankdir={}", cli.rankdir)]),
+        match args.format {
+            Format::Dot => writer::write_dot(&vg, &[format!("rankdir={}", args.rankdir)]),
             Format::Tgf => writer::write_tgf(&vg),
             Format::Text => writer::write_text(&vg),
             Format::Json => unreachable!(),
         }
     };
 
-    let mut stdout = std::io::stdout().lock();
-    if let Err(e) = stdout.write_all(output.as_bytes())
-        && e.kind() != std::io::ErrorKind::BrokenPipe
-    {
-        return Err(e.into());
+    Ok(output)
+}
+
+fn to_match_mode(mode: &MatchModeArg) -> MatchMode {
+    match mode {
+        MatchModeArg::Exact => MatchMode::Exact,
+        MatchModeArg::Suffix => MatchMode::Suffix,
     }
-    Ok(())
+}
+
+fn infer_target_kind(target: &str, explicit: Option<&TargetKindArg>) -> TargetKind {
+    match explicit {
+        Some(TargetKindArg::Path) => TargetKind::Path,
+        Some(TargetKindArg::Module) => TargetKind::Module,
+        None => {
+            let path = PathBuf::from(target);
+            if path.exists()
+                || target.ends_with(".py")
+                || target.contains('/')
+                || target.contains('\\')
+            {
+                TargetKind::Path
+            } else {
+                TargetKind::Module
+            }
+        }
+    }
+}
+
+fn render_query_response(response: &QueryResponse, format: &QueryFormat) -> String {
+    match format {
+        QueryFormat::Json => response.render_json(),
+        QueryFormat::Text => response.render_text(),
+    }
 }
