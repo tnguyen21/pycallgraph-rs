@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use assert_cmd::Command;
+use jsonschema::validator_for;
 use serde_json::Value;
 use tempfile::tempdir;
 
@@ -11,15 +12,20 @@ fn fixture_path(relative: &str) -> PathBuf {
 fn normalize_json_paths(value: &mut Value) {
     match value {
         Value::Object(map) => {
-            if let Some(file_value) = map.get_mut("file")
-                && let Some(file) = file_value.as_str()
-            {
-                let basename = Path::new(file)
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or(file)
-                    .to_string();
-                *file_value = Value::String(basename);
+            for key in ["file", "path", "root"] {
+                if let Some(file_value) = map.get_mut(key)
+                    && let Some(file) = file_value.as_str()
+                {
+                    let normalized = normalize_path_string(file);
+                    *file_value = Value::String(normalized);
+                }
+            }
+            if let Some(Value::Array(inputs)) = map.get_mut("inputs") {
+                for input in inputs {
+                    if let Some(value) = input.as_str() {
+                        *input = Value::String(normalize_path_string(value));
+                    }
+                }
             }
             for child in map.values_mut() {
                 normalize_json_paths(child);
@@ -32,6 +38,44 @@ fn normalize_json_paths(value: &mut Value) {
         }
         _ => {}
     }
+}
+
+fn normalize_path_string(file: &str) -> String {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let file_path = Path::new(file);
+    if let Ok(relative) = file_path.strip_prefix(&manifest_dir) {
+        if relative.as_os_str().is_empty() {
+            ".".to_string()
+        } else {
+            relative.to_string_lossy().replace('\\', "/")
+        }
+    } else if let Some(stripped) = file.strip_prefix(&format!("{}/", manifest_dir.display())) {
+        stripped.replace('\\', "/")
+    } else if file == manifest_dir.to_string_lossy() {
+        ".".to_string()
+    } else {
+        file.replace('\\', "/")
+    }
+}
+
+fn load_json_schema() -> Value {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("docs")
+        .join("json-schema")
+        .join("pycg-graph-v1.schema.json");
+    serde_json::from_str(
+        &std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display())),
+    )
+    .unwrap_or_else(|e| panic!("failed to parse {}: {e}", path.display()))
+}
+
+fn validate_json_contract(value: &Value) {
+    let schema = load_json_schema();
+    let validator = validator_for(&schema).expect("schema should compile");
+    validator
+        .validate(value)
+        .expect("CLI JSON output should match the v1 schema");
 }
 
 fn run_pycg(args: &[&str]) -> assert_cmd::assert::Assert {
@@ -110,6 +154,7 @@ fn cli_json_snapshot_symbol_graph() {
     .clone();
 
     let mut json: Value = serde_json::from_slice(&output).expect("valid json output");
+    validate_json_contract(&json);
     normalize_json_paths(&mut json);
     insta::assert_snapshot!(
         "cli_symbol_graph_json",
@@ -134,6 +179,7 @@ fn cli_json_snapshot_module_graph() {
     .clone();
 
     let mut json: Value = serde_json::from_slice(&output).expect("valid json output");
+    validate_json_contract(&json);
     normalize_json_paths(&mut json);
     insta::assert_snapshot!(
         "cli_module_graph_json",

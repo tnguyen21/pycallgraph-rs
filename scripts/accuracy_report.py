@@ -90,20 +90,23 @@ def evaluate_expectation(graph: dict[str, Any], expectation: dict[str, Any]) -> 
     edge_kind = expectation["kind"]
     source_match = expectation.get("source_match", "short")
     target_match = expectation.get("target_match", "short")
+    node_names = {node["id"]: node["canonical_name"] for node in graph["nodes"]}
 
     matching_sources = {
         edge["source"]
         for edge in graph["edges"]
         if edge["kind"] == edge_kind
-        and match_name(edge["source"], expectation["source"], source_match)
+        and edge["source"] in node_names
+        and match_name(node_names[edge["source"]], expectation["source"], source_match)
     }
     matching_targets = sorted(
         {
-            edge["target"]
+            node_names[edge["target"]]
             for edge in graph["edges"]
             if edge["kind"] == edge_kind
             and edge["source"] in matching_sources
-            and match_name(edge["target"], expectation["target"], target_match)
+            and edge["target"] in node_names
+            and match_name(node_names[edge["target"]], expectation["target"], target_match)
         }
     )
     matched_count = len(matching_targets)

@@ -114,7 +114,7 @@ pycg src/ -vv
 - **dot** — GraphViz DOT format, suitable for rendering with `dot`, `neato`, etc.
 - **tgf** — Trivial Graph Format
 - **text** — Plain text dependency list with `[D]`/`[U]` tags
-- **json** — Machine-readable nodes, edges, and graph statistics
+- **json** — Machine-readable graph output with nodes, edges, stats, and diagnostics
 
 Example JSON workflow:
 
@@ -123,7 +123,7 @@ pycg mypackage/ --format json > graph.json
 jq '.stats' graph.json
 ```
 
-The planned machine-readable contract is documented in
+The machine-readable contract is documented in
 [`docs/json-contract.md`](docs/json-contract.md).
 The corresponding JSON Schema lives at
 [`docs/json-schema/pycg-graph-v1.schema.json`](docs/json-schema/pycg-graph-v1.schema.json).

@@ -3,51 +3,107 @@ source: tests/cli.rs
 expression: "serde_json::to_string_pretty(&json).expect(\"snapshot json should serialize\")"
 ---
 {
+  "analysis": {
+    "inputs": [
+      "test_code/import_coverage"
+    ],
+    "node_inclusion_policy": "defined_only",
+    "path_kind": "root_relative",
+    "root": "tests"
+  },
+  "diagnostics": {
+    "ambiguous_resolutions": [],
+    "approximations": [],
+    "external_references": [],
+    "summary": {
+      "ambiguous_resolutions": 0,
+      "approximations": 0,
+      "external_references": 0,
+      "unresolved_references": 0,
+      "warnings": 0
+    },
+    "unresolved_references": [],
+    "warnings": []
+  },
   "edges": [
     {
       "kind": "uses",
-      "source": "test_code.import_coverage.user",
-      "target": "test_code.import_coverage.deep.inner"
+      "source": "n5",
+      "target": "n3"
     },
     {
       "kind": "uses",
-      "source": "test_code.import_coverage.user",
-      "target": "test_code.import_coverage.sibling"
+      "source": "n5",
+      "target": "n4"
     }
   ],
+  "graph_mode": "module",
   "nodes": [
     {
-      "file": "__init__.py",
-      "flavor": "module",
-      "name": "test_code.import_coverage"
+      "canonical_name": "test_code.import_coverage",
+      "id": "n1",
+      "kind": "module",
+      "location": {
+        "path": "test_code/import_coverage/__init__.py"
+      },
+      "name": "import_coverage",
+      "namespace": "test_code"
     },
     {
-      "file": "__init__.py",
-      "flavor": "module",
-      "name": "test_code.import_coverage.deep"
+      "canonical_name": "test_code.import_coverage.deep",
+      "id": "n2",
+      "kind": "module",
+      "location": {
+        "path": "test_code/import_coverage/deep/__init__.py"
+      },
+      "name": "deep",
+      "namespace": "test_code.import_coverage"
     },
     {
-      "file": "inner.py",
-      "flavor": "module",
-      "name": "test_code.import_coverage.deep.inner"
+      "canonical_name": "test_code.import_coverage.deep.inner",
+      "id": "n3",
+      "kind": "module",
+      "location": {
+        "path": "test_code/import_coverage/deep/inner.py"
+      },
+      "name": "inner",
+      "namespace": "test_code.import_coverage.deep"
     },
     {
-      "file": "sibling.py",
-      "flavor": "module",
-      "name": "test_code.import_coverage.sibling"
+      "canonical_name": "test_code.import_coverage.sibling",
+      "id": "n4",
+      "kind": "module",
+      "location": {
+        "path": "test_code/import_coverage/sibling.py"
+      },
+      "name": "sibling",
+      "namespace": "test_code.import_coverage"
     },
     {
-      "file": "user.py",
-      "flavor": "module",
-      "name": "test_code.import_coverage.user"
+      "canonical_name": "test_code.import_coverage.user",
+      "id": "n5",
+      "kind": "module",
+      "location": {
+        "path": "test_code/import_coverage/user.py"
+      },
+      "name": "user",
+      "namespace": "test_code.import_coverage"
     }
   ],
+  "schema_version": "1",
   "stats": {
-    "classes": 0,
+    "by_edge_kind": {
+      "uses": 2
+    },
+    "by_node_kind": {
+      "module": 5
+    },
+    "edges": 2,
     "files_analyzed": 5,
-    "functions": 0,
-    "modules": 5,
-    "total_edges": 2,
-    "total_nodes": 5
+    "nodes": 5
+  },
+  "tool": {
+    "name": "pycg-rs",
+    "version": "0.1.0"
   }
 }

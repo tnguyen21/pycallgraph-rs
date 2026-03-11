@@ -7,7 +7,7 @@ use walkdir::WalkDir;
 
 use pycg_rs::analyzer::CallGraph;
 use pycg_rs::visgraph::{VisualGraph, VisualOptions};
-use pycg_rs::writer;
+use pycg_rs::writer::{self, JsonGraphMode, JsonOutputOptions};
 
 #[derive(Parser)]
 #[command(name = "pycg", about = "Generate call graphs for Python programs")]
@@ -102,6 +102,11 @@ fn main() -> Result<()> {
     if files.is_empty() {
         bail!("No Python files found");
     }
+    let json_inputs: Vec<String> = cli
+        .files
+        .iter()
+        .map(|path| path.to_string_lossy().to_string())
+        .collect();
 
     // Default: show uses edges if neither --defines nor --uses specified
     let (draw_defines, draw_uses) = if !cli.defines && !cli.uses {
@@ -130,6 +135,11 @@ fn main() -> Result<()> {
                 &mod_defined,
                 &std::collections::HashMap::new(),
                 &mod_uses,
+                &JsonOutputOptions {
+                    graph_mode: JsonGraphMode::Module,
+                    analysis_root: cli.root.as_deref(),
+                    inputs: &json_inputs,
+                },
             )
         } else {
             writer::write_json(
@@ -137,6 +147,11 @@ fn main() -> Result<()> {
                 &cg.defined,
                 &cg.defines_edges,
                 &cg.uses_edges,
+                &JsonOutputOptions {
+                    graph_mode: JsonGraphMode::Symbol,
+                    analysis_root: cli.root.as_deref(),
+                    inputs: &json_inputs,
+                },
             )
         }
     } else {

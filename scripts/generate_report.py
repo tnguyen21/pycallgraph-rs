@@ -123,9 +123,23 @@ def run_cargo_test_count() -> int | None:
 
 def generate_html(corpora_results: list[dict], meta: dict) -> str:
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    dash = "&mdash;"
+
+    def node_kind_count(stats: dict, key: str) -> int | str:
+        by_node_kind = stats.get("by_node_kind", {})
+        return by_node_kind.get(key, dash)
+
+    def function_like_count(stats: dict) -> int | str:
+        by_node_kind = stats.get("by_node_kind", {})
+        values = [
+            by_node_kind.get("function", 0),
+            by_node_kind.get("method", 0),
+            by_node_kind.get("static_method", 0),
+            by_node_kind.get("class_method", 0),
+        ]
+        return sum(values) if any(value != 0 for value in values) else dash
 
     # Summary table rows
-    dash = "&mdash;"
     rows_html = ""
     for r in corpora_results:
         s = r.get("stats", {})
@@ -134,11 +148,11 @@ def generate_html(corpora_results: list[dict], meta: dict) -> str:
         status_class = "ok" if r.get("_success") else "fail"
         status_text = "&#x2713;" if r.get("_success") else "&#x2717;"
         files_analyzed = s.get("files_analyzed", dash)
-        total_nodes = s.get("total_nodes", dash)
-        classes = s.get("classes", dash)
-        functions = s.get("functions", dash)
-        modules = s.get("modules", dash)
-        total_edges = s.get("total_edges", dash)
+        total_nodes = s.get("nodes", dash)
+        classes = node_kind_count(s, "class")
+        functions = function_like_count(s)
+        modules = node_kind_count(s, "module")
+        total_edges = s.get("edges", dash)
         rows_html += f"""<tr class="{status_class}">
   <td class="name">{escape(r['name'])}</td>
   <td>{py_files}</td>
@@ -160,10 +174,10 @@ def generate_html(corpora_results: list[dict], meta: dict) -> str:
         s = r.get("stats", {})
         svg = r.get("_svg", "")
         summary_stats = (
-            f"{s.get('total_nodes', 0)} nodes, "
-            f"{s.get('total_edges', 0)} edges, "
-            f"{s.get('classes', 0)} classes, "
-            f"{s.get('functions', 0)} functions"
+            f"{s.get('nodes', 0)} nodes, "
+            f"{s.get('edges', 0)} edges, "
+            f"{s.get('by_node_kind', {}).get('class', 0)} classes, "
+            f"{sum(s.get('by_node_kind', {}).get(kind, 0) for kind in ['function', 'method', 'static_method', 'class_method'])} functions"
         )
         svg_block = f'<div class="svg-container">{svg}</div>' if svg else '<p class="no-svg">SVG not available (graphviz not found?)</p>'
         details_html += f"""

@@ -3,86 +3,146 @@ source: tests/cli.rs
 expression: "serde_json::to_string_pretty(&json).expect(\"snapshot json should serialize\")"
 ---
 {
+  "analysis": {
+    "inputs": [
+      "tests/test_code/accuracy_factory.py"
+    ],
+    "node_inclusion_policy": "defined_only",
+    "path_kind": "root_relative",
+    "root": "."
+  },
+  "diagnostics": {
+    "ambiguous_resolutions": [],
+    "approximations": [],
+    "external_references": [],
+    "summary": {
+      "ambiguous_resolutions": 0,
+      "approximations": 0,
+      "external_references": 0,
+      "unresolved_references": 0,
+      "warnings": 0
+    },
+    "unresolved_references": [],
+    "warnings": []
+  },
   "edges": [
     {
       "kind": "defines",
-      "source": "tests.test_code.accuracy_factory",
-      "target": "tests.test_code.accuracy_factory.Product"
+      "source": "n1",
+      "target": "n2"
     },
     {
       "kind": "defines",
-      "source": "tests.test_code.accuracy_factory",
-      "target": "tests.test_code.accuracy_factory.consumer"
+      "source": "n1",
+      "target": "n3"
     },
     {
       "kind": "defines",
-      "source": "tests.test_code.accuracy_factory",
-      "target": "tests.test_code.accuracy_factory.factory"
+      "source": "n1",
+      "target": "n4"
     },
     {
       "kind": "defines",
-      "source": "tests.test_code.accuracy_factory.Product",
-      "target": "tests.test_code.accuracy_factory.Product.make"
+      "source": "n2",
+      "target": "n5"
     },
     {
       "kind": "uses",
-      "source": "tests.test_code.accuracy_factory.consumer",
-      "target": "tests.test_code.accuracy_factory.Product"
+      "source": "n3",
+      "target": "n2"
     },
     {
       "kind": "uses",
-      "source": "tests.test_code.accuracy_factory.consumer",
-      "target": "tests.test_code.accuracy_factory.Product.make"
+      "source": "n3",
+      "target": "n4"
     },
     {
       "kind": "uses",
-      "source": "tests.test_code.accuracy_factory.consumer",
-      "target": "tests.test_code.accuracy_factory.factory"
+      "source": "n3",
+      "target": "n5"
     },
     {
       "kind": "uses",
-      "source": "tests.test_code.accuracy_factory.factory",
-      "target": "tests.test_code.accuracy_factory.Product"
+      "source": "n4",
+      "target": "n2"
     }
   ],
+  "graph_mode": "symbol",
   "nodes": [
     {
-      "file": "accuracy_factory.py",
-      "flavor": "module",
-      "line": 1,
-      "name": "tests.test_code.accuracy_factory"
+      "canonical_name": "tests.test_code.accuracy_factory",
+      "id": "n1",
+      "kind": "module",
+      "location": {
+        "line": 1,
+        "path": "tests/test_code/accuracy_factory.py"
+      },
+      "name": "accuracy_factory",
+      "namespace": "tests.test_code"
     },
     {
-      "file": "accuracy_factory.py",
-      "flavor": "class",
-      "line": 15,
-      "name": "tests.test_code.accuracy_factory.Product"
+      "canonical_name": "tests.test_code.accuracy_factory.Product",
+      "id": "n2",
+      "kind": "class",
+      "location": {
+        "line": 15,
+        "path": "tests/test_code/accuracy_factory.py"
+      },
+      "name": "Product",
+      "namespace": "tests.test_code.accuracy_factory"
     },
     {
-      "file": "accuracy_factory.py",
-      "flavor": "function",
-      "line": 25,
-      "name": "tests.test_code.accuracy_factory.consumer"
+      "canonical_name": "tests.test_code.accuracy_factory.consumer",
+      "id": "n3",
+      "kind": "function",
+      "location": {
+        "line": 25,
+        "path": "tests/test_code/accuracy_factory.py"
+      },
+      "name": "consumer",
+      "namespace": "tests.test_code.accuracy_factory"
     },
     {
-      "file": "accuracy_factory.py",
-      "flavor": "function",
-      "line": 20,
-      "name": "tests.test_code.accuracy_factory.factory"
+      "canonical_name": "tests.test_code.accuracy_factory.factory",
+      "id": "n4",
+      "kind": "function",
+      "location": {
+        "line": 20,
+        "path": "tests/test_code/accuracy_factory.py"
+      },
+      "name": "factory",
+      "namespace": "tests.test_code.accuracy_factory"
     },
     {
-      "file": "accuracy_factory.py",
-      "flavor": "method",
-      "line": 16,
-      "name": "tests.test_code.accuracy_factory.Product.make"
+      "canonical_name": "tests.test_code.accuracy_factory.Product.make",
+      "id": "n5",
+      "kind": "method",
+      "location": {
+        "line": 16,
+        "path": "tests/test_code/accuracy_factory.py"
+      },
+      "name": "make",
+      "namespace": "tests.test_code.accuracy_factory.Product"
     }
   ],
+  "schema_version": "1",
   "stats": {
-    "classes": 1,
+    "by_edge_kind": {
+      "defines": 4,
+      "uses": 4
+    },
+    "by_node_kind": {
+      "class": 1,
+      "function": 2,
+      "method": 1,
+      "module": 1
+    },
+    "edges": 8,
     "files_analyzed": 1,
-    "functions": 3,
-    "modules": 1,
-    "total_edges": 8,
-    "total_nodes": 5
+    "nodes": 5
+  },
+  "tool": {
+    "name": "pycg-rs",
+    "version": "0.1.0"
   }
 }

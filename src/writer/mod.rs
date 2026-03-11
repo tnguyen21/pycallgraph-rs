@@ -6,8 +6,9 @@
 use crate::node::{Node, NodeId};
 use crate::visgraph::{VisualGraph, VisualNode};
 use serde::Serialize;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write;
+use std::path::{Path, PathBuf};
 
 // ---------------------------------------------------------------------------
 // DOT writer
@@ -168,38 +169,267 @@ pub fn write_text(graph: &VisualGraph) -> String {
 // JSON writer
 // ---------------------------------------------------------------------------
 
+pub enum JsonGraphMode {
+    Symbol,
+    Module,
+}
+
+pub struct JsonOutputOptions<'a> {
+    pub graph_mode: JsonGraphMode,
+    pub analysis_root: Option<&'a str>,
+    pub inputs: &'a [String],
+}
+
+struct PathFormatter {
+    root: Option<PathBuf>,
+    cwd: PathBuf,
+    path_kind: &'static str,
+}
+
+impl PathFormatter {
+    fn new(root: Option<&str>, inputs: &[String]) -> Self {
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let root = root.map(|value| Self::resolve_path(&cwd, value));
+        let path_kind = if root.is_some() {
+            "root_relative"
+        } else if inputs.iter().all(|value| !Path::new(value).is_absolute()) {
+            "input_relative"
+        } else {
+            "absolute"
+        };
+        Self {
+            root,
+            cwd,
+            path_kind,
+        }
+    }
+
+    fn resolve_path(base: &Path, path: &str) -> PathBuf {
+        let path = Path::new(path);
+        if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            base.join(path)
+        }
+    }
+
+    fn format_analysis_root(&self, root: &str) -> String {
+        let path = Self::resolve_path(&self.cwd, root);
+        self.display_path(&path)
+    }
+
+    fn format_input(&self, input: &str) -> String {
+        let path = Self::resolve_path(&self.cwd, input);
+        self.format_graph_path(&path)
+    }
+
+    fn format_location(&self, path: &str) -> String {
+        self.format_graph_path(&Self::resolve_path(&self.cwd, path))
+    }
+
+    fn format_graph_path(&self, path: &Path) -> String {
+        if let Some(root) = &self.root
+            && let Ok(relative) = path.strip_prefix(root)
+        {
+            return Self::path_to_string(relative);
+        }
+
+        match self.path_kind {
+            "input_relative" => self.display_path(path),
+            _ => Self::path_to_string(path),
+        }
+    }
+
+    fn display_path(&self, path: &Path) -> String {
+        if let Ok(relative) = path.strip_prefix(&self.cwd) {
+            if relative.as_os_str().is_empty() {
+                ".".to_string()
+            } else {
+                Self::path_to_string(relative)
+            }
+        } else {
+            Self::path_to_string(path)
+        }
+    }
+
+    fn path_to_string(path: &Path) -> String {
+        path.to_string_lossy().replace('\\', "/")
+    }
+}
+
 #[derive(Serialize)]
-struct JsonNode {
-    name: String,
-    flavor: String,
+struct JsonTool {
+    name: &'static str,
+    version: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    file: Option<String>,
+    commit: Option<&'static str>,
+}
+
+#[derive(Serialize)]
+struct JsonAnalysis {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    root: Option<String>,
+    inputs: Vec<String>,
+    node_inclusion_policy: &'static str,
+    path_kind: &'static str,
+}
+
+#[derive(Serialize)]
+struct JsonStats {
+    nodes: usize,
+    edges: usize,
+    files_analyzed: usize,
+    by_node_kind: BTreeMap<String, usize>,
+    by_edge_kind: BTreeMap<String, usize>,
+}
+
+#[derive(Serialize)]
+struct JsonLocation {
+    path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     line: Option<usize>,
 }
 
 #[derive(Serialize)]
+struct JsonNode {
+    id: String,
+    kind: String,
+    canonical_name: String,
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    namespace: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    location: Option<JsonLocation>,
+}
+
+#[derive(Serialize)]
 struct JsonEdge {
+    kind: &'static str,
     source: String,
     target: String,
-    kind: &'static str,
+}
+
+#[derive(Serialize)]
+struct JsonDiagnosticSummary {
+    warnings: usize,
+    unresolved_references: usize,
+    ambiguous_resolutions: usize,
+    external_references: usize,
+    approximations: usize,
+}
+
+#[derive(Serialize)]
+struct JsonWarning {
+    code: String,
+    message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    line: Option<usize>,
+}
+
+#[derive(Serialize)]
+struct JsonUnresolvedReference {
+    kind: String,
+    source: String,
+    symbol: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    line: Option<usize>,
+}
+
+#[derive(Serialize)]
+struct JsonAmbiguousResolution {
+    kind: String,
+    source: String,
+    symbol: String,
+    candidate_targets: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    line: Option<usize>,
+}
+
+#[derive(Serialize)]
+struct JsonExternalReference {
+    kind: String,
+    source: String,
+    canonical_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    line: Option<usize>,
+}
+
+#[derive(Serialize)]
+struct JsonApproximation {
+    kind: String,
+    source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    symbol: Option<String>,
+    reason: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    candidate_targets: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    line: Option<usize>,
+}
+
+#[derive(Serialize)]
+struct JsonDiagnostics {
+    summary: JsonDiagnosticSummary,
+    warnings: Vec<JsonWarning>,
+    unresolved_references: Vec<JsonUnresolvedReference>,
+    ambiguous_resolutions: Vec<JsonAmbiguousResolution>,
+    external_references: Vec<JsonExternalReference>,
+    approximations: Vec<JsonApproximation>,
 }
 
 #[derive(Serialize)]
 struct JsonGraph {
+    schema_version: &'static str,
+    tool: JsonTool,
+    graph_mode: &'static str,
+    analysis: JsonAnalysis,
+    stats: JsonStats,
     nodes: Vec<JsonNode>,
     edges: Vec<JsonEdge>,
-    stats: JsonStats,
+    diagnostics: JsonDiagnostics,
 }
 
-#[derive(Serialize)]
-struct JsonStats {
-    total_nodes: usize,
-    total_edges: usize,
-    files_analyzed: usize,
-    classes: usize,
-    functions: usize,
-    modules: usize,
+fn graph_mode_label(mode: &JsonGraphMode) -> &'static str {
+    match mode {
+        JsonGraphMode::Symbol => "symbol",
+        JsonGraphMode::Module => "module",
+    }
+}
+
+fn public_kind(node: &Node) -> Option<String> {
+    use crate::node::Flavor;
+
+    match node.flavor {
+        Flavor::Module => Some("module".to_string()),
+        Flavor::Class => Some("class".to_string()),
+        Flavor::Function => Some("function".to_string()),
+        Flavor::Method => Some("method".to_string()),
+        Flavor::StaticMethod => Some("static_method".to_string()),
+        Flavor::ClassMethod => Some("class_method".to_string()),
+        _ => None,
+    }
+}
+
+fn node_name_and_namespace(node: &Node, canonical_name: &str) -> (String, Option<String>) {
+    if let Some(namespace) = node.namespace.as_ref().filter(|value| !value.is_empty()) {
+        return (node.name.clone(), Some(namespace.clone()));
+    }
+
+    if let Some((namespace, name)) = canonical_name.rsplit_once('.') {
+        return (name.to_string(), Some(namespace.to_string()));
+    }
+
+    (canonical_name.to_string(), None)
 }
 
 /// Render the call graph directly as JSON.
@@ -211,9 +441,9 @@ pub fn write_json(
     defined: &HashSet<NodeId>,
     defines_edges: &HashMap<NodeId, HashSet<NodeId>>,
     uses_edges: &HashMap<NodeId, HashSet<NodeId>>,
+    options: &JsonOutputOptions<'_>,
 ) -> String {
-    use crate::node::Flavor;
-
+    let path_formatter = PathFormatter::new(options.analysis_root, options.inputs);
     let mut nodes = Vec::new();
     let mut sorted_ids: Vec<NodeId> = defined.iter().copied().collect();
     sorted_ids.sort_by(|&a, &b| {
@@ -223,33 +453,41 @@ pub fn write_json(
     });
 
     let mut files: HashSet<&str> = HashSet::new();
-    let mut classes = 0usize;
-    let mut functions = 0usize;
-    let mut modules = 0usize;
+    let mut node_kind_counts: BTreeMap<String, usize> = BTreeMap::new();
+    let mut node_ids = HashMap::new();
+
+    for (index, &id) in sorted_ids.iter().enumerate() {
+        node_ids.insert(id, format!("n{}", index + 1));
+    }
 
     for &id in &sorted_ids {
         let n = &nodes_arena[id];
+        let canonical_name = n.get_name();
+        let (name, namespace) = node_name_and_namespace(n, &canonical_name);
         if let Some(ref f) = n.filename {
             files.insert(f.as_str());
         }
-        match n.flavor {
-            Flavor::Class => classes += 1,
-            Flavor::Function | Flavor::Method | Flavor::StaticMethod | Flavor::ClassMethod => {
-                functions += 1
-            }
-            Flavor::Module => modules += 1,
-            _ => {}
-        }
+        let kind = public_kind(n).unwrap_or_else(|| "unknown".to_string());
+        *node_kind_counts.entry(kind.clone()).or_insert(0) += 1;
         nodes.push(JsonNode {
-            name: n.get_name(),
-            flavor: n.flavor.to_string(),
-            file: n.filename.clone(),
-            line: n.line,
+            id: node_ids
+                .get(&id)
+                .expect("sorted node should have an assigned id")
+                .clone(),
+            kind,
+            canonical_name,
+            name,
+            namespace,
+            location: n.filename.as_ref().map(|filename| JsonLocation {
+                path: path_formatter.format_location(filename),
+                line: n.line,
+            }),
         });
     }
 
     let defined_set: &HashSet<NodeId> = defined;
     let mut edges = Vec::new();
+    let mut edge_kind_counts: BTreeMap<String, usize> = BTreeMap::new();
 
     for (&src, targets) in defines_edges {
         if !defined_set.contains(&src) {
@@ -260,10 +498,17 @@ pub fn write_json(
                 continue;
             }
             edges.push(JsonEdge {
-                source: nodes_arena[src].get_name(),
-                target: nodes_arena[tgt].get_name(),
                 kind: "defines",
+                source: node_ids
+                    .get(&src)
+                    .expect("defined source node should have an assigned id")
+                    .clone(),
+                target: node_ids
+                    .get(&tgt)
+                    .expect("defined target node should have an assigned id")
+                    .clone(),
             });
+            *edge_kind_counts.entry("defines".to_string()).or_insert(0) += 1;
         }
     }
 
@@ -276,26 +521,71 @@ pub fn write_json(
                 continue;
             }
             edges.push(JsonEdge {
-                source: nodes_arena[src].get_name(),
-                target: nodes_arena[tgt].get_name(),
                 kind: "uses",
+                source: node_ids
+                    .get(&src)
+                    .expect("defined source node should have an assigned id")
+                    .clone(),
+                target: node_ids
+                    .get(&tgt)
+                    .expect("defined target node should have an assigned id")
+                    .clone(),
             });
+            *edge_kind_counts.entry("uses".to_string()).or_insert(0) += 1;
         }
     }
 
     edges.sort_by(|a, b| (&a.source, &a.target, a.kind).cmp(&(&b.source, &b.target, b.kind)));
 
+    let warnings: Vec<JsonWarning> = Vec::new();
+    let unresolved_references: Vec<JsonUnresolvedReference> = Vec::new();
+    let ambiguous_resolutions: Vec<JsonAmbiguousResolution> = Vec::new();
+    let external_references: Vec<JsonExternalReference> = Vec::new();
+    let approximations: Vec<JsonApproximation> = Vec::new();
+
     let graph = JsonGraph {
+        schema_version: "1",
+        tool: JsonTool {
+            name: env!("CARGO_PKG_NAME"),
+            version: env!("CARGO_PKG_VERSION"),
+            commit: option_env!("PYCG_RS_GIT_COMMIT"),
+        },
+        graph_mode: graph_mode_label(&options.graph_mode),
+        analysis: JsonAnalysis {
+            root: options
+                .analysis_root
+                .map(|root| path_formatter.format_analysis_root(root)),
+            inputs: options
+                .inputs
+                .iter()
+                .map(|input| path_formatter.format_input(input))
+                .collect(),
+            node_inclusion_policy: "defined_only",
+            path_kind: path_formatter.path_kind,
+        },
         stats: JsonStats {
-            total_nodes: nodes.len(),
-            total_edges: edges.len(),
+            nodes: nodes.len(),
+            edges: edges.len(),
             files_analyzed: files.len(),
-            classes,
-            functions,
-            modules,
+            by_node_kind: node_kind_counts,
+            by_edge_kind: edge_kind_counts,
         },
         nodes,
         edges,
+        diagnostics: JsonDiagnostics {
+            summary: JsonDiagnosticSummary {
+                warnings: warnings.len(),
+                unresolved_references: unresolved_references.len(),
+                ambiguous_resolutions: ambiguous_resolutions.len(),
+                external_references: external_references.len(),
+                approximations: approximations.len(),
+            },
+            warnings,
+            unresolved_references,
+            ambiguous_resolutions,
+            external_references,
+            approximations,
+        },
     };
 
     serde_json::to_string_pretty(&graph).expect("JSON serialization failed")
