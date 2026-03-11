@@ -118,6 +118,41 @@ class PycgRsAdapter(ToolAdapter):
         )
 
 
+def _parse_pycg_json(data: dict) -> ToolResult:
+    """Parse PyCG-format JSON: {caller_fqn: [callee_fqn, ...], ...}
+
+    Shared by PyCG original and jarviscg (same output format).
+    """
+    edges = set()
+    all_nodes = set()
+    for caller, callees in data.items():
+        all_nodes.add(caller)
+        for callee in callees:
+            all_nodes.add(callee)
+            edges.add((caller, callee))
+    return ToolResult(
+        success=True,
+        edges=edges,
+        node_count=len(all_nodes),
+        edge_count=len(edges),
+        raw=data,
+    )
+
+
+def _run_subprocess_json(cmd: list[str], timeout: int = 120) -> ToolResult | dict:
+    """Run a command that outputs JSON to stdout. Returns parsed dict or ToolResult on error."""
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, cwd=REPO_ROOT)
+    except subprocess.TimeoutExpired:
+        return ToolResult(success=False, error=f"timeout ({timeout}s)")
+    if result.returncode != 0:
+        return ToolResult(success=False, error=result.stderr[:300])
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError as e:
+        return ToolResult(success=False, error=f"bad JSON: {e}")
+
+
 class PycgOriginalAdapter(ToolAdapter):
     """Original PyCG (vitsalis/PyCG). Archived, unmaintained since 2021."""
 
@@ -128,7 +163,6 @@ class PycgOriginalAdapter(ToolAdapter):
         self._python = str(VENV_BIN / "python3")
 
     def is_available(self) -> bool:
-        """Check if the pycg module is importable."""
         try:
             r = subprocess.run(
                 [self._python, "-c", "from pycg import pycg; print('ok')"],
@@ -148,58 +182,14 @@ class PycgOriginalAdapter(ToolAdapter):
         if root:
             cmd.extend(["--package", Path(root).name])
         cmd.extend(files)
-
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, cwd=REPO_ROOT)
-        except subprocess.TimeoutExpired:
-            return ToolResult(success=False, error="timeout")
-
-        if result.returncode != 0:
-            return ToolResult(success=False, error=result.stderr[:300])
-
-        try:
-            data = json.loads(result.stdout)
-        except json.JSONDecodeError as e:
-            return ToolResult(success=False, error=f"bad JSON: {e}")
-
-        return self._parse_json(data)
-
-    def _parse_json(self, data: dict) -> ToolResult:
-        """PyCG output: {caller_fqn: [callee_fqn, ...], ...}"""
-        edges = set()
-        for caller, callees in data.items():
-            for callee in callees:
-                edges.add((caller, callee))
-        # Count unique nodes
-        all_nodes = set()
-        for caller, callees in data.items():
-            all_nodes.add(caller)
-            all_nodes.update(callees)
-        return ToolResult(
-            success=True,
-            edges=edges,
-            node_count=len(all_nodes),
-            edge_count=len(edges),
-            raw=data,
-        )
+        data = _run_subprocess_json(cmd)
+        return data if isinstance(data, ToolResult) else _parse_pycg_json(data)
 
     def run_on_package(self, source_dir: Path, package_name: str) -> ToolResult:
-        py_files = sorted(str(f) for f in source_dir.rglob("*.py"))
+        py_files = sorted(str(p) for p in source_dir.rglob("*.py"))
         cmd = [*self._base_cmd(), "--package", package_name, *py_files]
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300, cwd=REPO_ROOT)
-        except subprocess.TimeoutExpired:
-            return ToolResult(success=False, error="timeout (300s)")
-
-        if result.returncode != 0:
-            return ToolResult(success=False, error=result.stderr[:300])
-
-        try:
-            data = json.loads(result.stdout)
-        except json.JSONDecodeError as e:
-            return ToolResult(success=False, error=f"bad JSON: {e}")
-
-        return self._parse_json(data)
+        data = _run_subprocess_json(cmd, timeout=300)
+        return data if isinstance(data, ToolResult) else _parse_pycg_json(data)
 
 
 class JarvisCGAdapter(ToolAdapter):
@@ -214,22 +204,18 @@ class JarvisCGAdapter(ToolAdapter):
     def is_available(self) -> bool:
         return Path(self.binary).is_file()
 
-    def run(self, files: list[str], root: str | None = None) -> ToolResult:
-        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
-            out_path = f.name
+    def _run_to_file(self, cmd: list[str], timeout: int = 120) -> ToolResult:
+        """Run jarviscg with -o <tmpfile> and parse the result."""
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp:
+            out_path = tmp.name
         try:
-            cmd = [self.binary]
-            if root:
-                cmd.extend(["--package", Path(root).name])
-            cmd.extend(["-o", out_path, *files])
-
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, cwd=REPO_ROOT)
+            full_cmd = [*cmd, "-o", out_path]
+            result = subprocess.run(full_cmd, capture_output=True, text=True, timeout=timeout, cwd=REPO_ROOT)
             if result.returncode != 0:
                 return ToolResult(success=False, error=result.stderr[:300])
-
             data = json.loads(Path(out_path).read_text())
         except subprocess.TimeoutExpired:
-            return ToolResult(success=False, error="timeout")
+            return ToolResult(success=False, error=f"timeout ({timeout}s)")
         except (json.JSONDecodeError, FileNotFoundError) as e:
             return ToolResult(success=False, error=str(e))
         finally:
@@ -237,57 +223,19 @@ class JarvisCGAdapter(ToolAdapter):
                 os.unlink(out_path)
             except OSError:
                 pass
+        return _parse_pycg_json(data)
 
-        # jarviscg uses same output format as PyCG
-        edges = set()
-        all_nodes = set()
-        for caller, callees in data.items():
-            all_nodes.add(caller)
-            for callee in callees:
-                all_nodes.add(callee)
-                edges.add((caller, callee))
-        return ToolResult(
-            success=True,
-            edges=edges,
-            node_count=len(all_nodes),
-            edge_count=len(edges),
-            raw=data,
-        )
+    def run(self, files: list[str], root: str | None = None) -> ToolResult:
+        cmd = [self.binary]
+        if root:
+            cmd.extend(["--package", Path(root).name])
+        cmd.extend(files)
+        return self._run_to_file(cmd)
 
     def run_on_package(self, source_dir: Path, package_name: str) -> ToolResult:
-        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
-            out_path = f.name
-        try:
-            py_files = sorted(str(f) for f in source_dir.rglob("*.py"))
-            cmd = [self.binary, "--package", package_name, "-o", out_path, *py_files]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300, cwd=REPO_ROOT)
-            if result.returncode != 0:
-                return ToolResult(success=False, error=result.stderr[:300])
-            data = json.loads(Path(out_path).read_text())
-        except subprocess.TimeoutExpired:
-            return ToolResult(success=False, error="timeout (300s)")
-        except (json.JSONDecodeError, FileNotFoundError) as e:
-            return ToolResult(success=False, error=str(e))
-        finally:
-            try:
-                os.unlink(out_path)
-            except OSError:
-                pass
-
-        edges = set()
-        all_nodes = set()
-        for caller, callees in data.items():
-            all_nodes.add(caller)
-            for callee in callees:
-                all_nodes.add(callee)
-                edges.add((caller, callee))
-        return ToolResult(
-            success=True,
-            edges=edges,
-            node_count=len(all_nodes),
-            edge_count=len(edges),
-            raw=data,
-        )
+        py_files = sorted(str(p) for p in source_dir.rglob("*.py"))
+        cmd = [self.binary, "--package", package_name, *py_files]
+        return self._run_to_file(cmd, timeout=300)
 
 
 class Pyan3Adapter(ToolAdapter):
@@ -369,12 +317,8 @@ def match_name(actual: str, expected: str, matcher: str) -> bool:
     raise ValueError(f"unknown matcher: {matcher}")
 
 
-def check_expectation(edges: set[tuple[str, str]], nodes_by_name: dict, expectation: dict) -> dict:
-    """Check a single expectation against a set of edges.
-
-    For pycg-rs, nodes_by_name maps canonical_name -> node_id from JSON.
-    For other tools, edges are already (fqn, fqn) tuples.
-    """
+def check_expectation(edges: set[tuple[str, str]], expectation: dict) -> dict:
+    """Check a single expectation against a set of (caller_fqn, callee_fqn) edges."""
     source_match = expectation.get("source_match", "short")
     target_match = expectation.get("target_match", "short")
     source_pat = expectation["source"]
@@ -424,7 +368,7 @@ def evaluate_fixture(
     for exp in case["expectations"]:
         # Filter to the right edge kind for pycg-rs (already filtered to "uses" in adapter)
         # For other tools, all edges are call edges
-        check = check_expectation(result.edges, {}, exp)
+        check = check_expectation(result.edges, exp)
         if check["passed"]:
             passed += 1
         else:

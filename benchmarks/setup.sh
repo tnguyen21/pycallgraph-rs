@@ -94,7 +94,13 @@ echo ""
 echo "Benchmark environment ready."
 echo ""
 echo "Available tools:"
-for tool in pycg pyan3 code2flow jarviscg; do
+# PyCG has no console_scripts entry — check if importable
+if "$VENV_PY" -c "from pycg import pycg" 2>/dev/null; then
+    echo "  ✓ pycg (python -m pycg)"
+else
+    echo "  ✗ pycg (not importable)"
+fi
+for tool in pyan3 code2flow jarviscg; do
     if [ -x "$VENV_DIR/bin/$tool" ]; then
         echo "  ✓ $tool"
     else

@@ -17,7 +17,7 @@ import statistics
 import subprocess
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -45,9 +45,7 @@ SOURCE_HINTS: dict[str, str] = {
 class Tool:
     name: str
     binary: str | None = None
-    build_cmd: list[str] = field(default_factory=list)
 
-    # Subclasses override this
     def command(self, source_dir: Path, corpus_name: str) -> list[str]:
         raise NotImplementedError
 
@@ -230,7 +228,6 @@ def print_results_table(results: list[dict]) -> None:
 
     for r in results:
         cols = ""
-        pycg_rs_ms = None
         for t in tool_names:
             tool_data = r.get("tools", {}).get(t, {})
             if tool_data.get("success"):
