@@ -1,10 +1,26 @@
 # pycg-rs
 
-A Rust reimplementation of [pyan3](https://github.com/Technologicat/pyan) — a static call graph generator for Python programs.
+[![CI](https://github.com/tau/pycg-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/tau/pycg-rs/actions/workflows/ci.yml)
+[![Analysis Report](https://github.com/tau/pycg-rs/actions/workflows/report.yml/badge.svg)](https://github.com/tau/pycg-rs/actions/workflows/report.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+Fast static Python call graphs in Rust.
 
 Parses Python source files and produces a directed graph of defines/uses relationships between modules, classes, functions, and methods. No Python runtime required — uses [ruff's parser](https://github.com/astral-sh/ruff) for AST parsing.
 
+- CLI for DOT, TGF, text, and JSON output
+- Module-level and symbol-level graph modes
+- Real-world corpus smoke testing and a published GitHub Pages report
+
+GitHub Pages report: <https://tau.github.io/pycg-rs/>
+
 ## Installation
+
+```bash
+cargo install --git https://github.com/tau/pycg-rs --bin pycg
+```
+
+For local development from a checkout:
 
 ```bash
 cargo install --path . --force
@@ -16,6 +32,19 @@ If `pycg` is not on your `PATH`, add this to your shell config:
 
 ```bash
 export PATH="$HOME/.cargo/bin:$PATH"
+```
+
+## Quickstart
+
+```bash
+# Analyze a package and print a plain-text dependency list
+pycg mypackage/ --format text
+
+# Emit machine-readable JSON
+pycg mypackage/ --format json > graph.json
+
+# Render an SVG with GraphViz
+pycg mypackage/ --defines --uses --grouped --annotated mypackage/ | dot -Tsvg -o callgraph.svg
 ```
 
 ## Usage
@@ -54,7 +83,7 @@ Options:
   -g, --grouped          Group nodes by namespace
   -a, --annotated        Annotate nodes with file:line info
   -r, --root <ROOT>      Root directory for module name resolution
-      --format <FORMAT>  Output format: dot, tgf, text [default: dot]
+      --format <FORMAT>  Output format: dot, tgf, text, json [default: dot]
       --rankdir <DIR>    GraphViz rank direction [default: TB]
   -v, --verbose          Enable verbose logging (-vv for debug)
 ```
@@ -85,6 +114,14 @@ pycg src/ -vv
 - **dot** — GraphViz DOT format, suitable for rendering with `dot`, `neato`, etc.
 - **tgf** — Trivial Graph Format
 - **text** — Plain text dependency list with `[D]`/`[U]` tags
+- **json** — Machine-readable nodes, edges, and graph statistics
+
+Example JSON workflow:
+
+```bash
+pycg mypackage/ --format json > graph.json
+jq '.stats' graph.json
+```
 
 ## How it works
 
@@ -122,10 +159,10 @@ cargo build --release
 ## Testing
 
 ```bash
-cargo test
+cargo test --all-targets
 ```
 
-Corpus-scale smoke tests run the full analysis pipeline over vendored real-world packages (`requests`, `flask`, `rich`) and assert non-degenerate graph statistics. They skip automatically when the corpora are absent (e.g. in fresh clones), so `cargo test` stays green without them.
+Corpus-scale smoke tests run the full analysis pipeline over vendored real-world packages (`requests`, `flask`, `rich`) and assert non-degenerate graph statistics. They skip automatically when the corpora are absent (e.g. a fresh clone), so `cargo test --all-targets` stays green without them.
 
 To clone the corpora (and the `pyan`/`PyCG` reference repos) locally:
 
@@ -149,11 +186,20 @@ Wall-clock comparison against [code2flow](https://github.com/scottrogowski/code2
 
 These tools are not equivalent — pycg performs deeper static analysis (MRO resolution, return-value propagation, protocol edges) while code2flow does lightweight control-flow extraction. The comparison is wall-clock only and says nothing about output quality.
 
-To reproduce: `./benchmarks/setup.sh && python3 benchmarks/bench.py` (requires the `benchmarks` branch corpora).
+To reproduce:
 
-## Differences from pyan3
+```bash
+./benchmarks/setup.sh
+python3 benchmarks/bench.py --pycg ./target/release/pycg
+```
 
-This is a standalone CLI/library that already covers a substantial subset of Python call-graph analysis, but it is still narrower than pyan3 in scope.
+The benchmark harness bootstraps the same corpora used by the smoke tests. Results are intended as trend data, not as a semantic correctness claim.
+
+## Current limitations
+
+- This is still narrower than `pyan3` in some dynamic-language corner cases.
+- Corpus runs are smoke tests, not full semantic validation against a gold standard.
+- Benchmark numbers are wall-clock comparisons and should be treated as directional.
 
 ## License
 

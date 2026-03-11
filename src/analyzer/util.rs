@@ -49,13 +49,13 @@ pub(super) fn literal_key_from_expr(expr: &Expr) -> Option<LiteralKey> {
             Number::Float(_) | Number::Complex { .. } => None,
         },
         Expr::UnaryOp(u) if matches!(u.op, UnaryOp::USub) => {
-            if let Expr::NumberLiteral(n) = u.operand.as_ref() {
-                if let Number::Int(i) = &n.value {
-                    return i
-                        .as_i64()
-                        .and_then(|value| value.checked_neg())
-                        .map(LiteralKey::Int);
-                }
+            if let Expr::NumberLiteral(n) = u.operand.as_ref()
+                && let Number::Int(i) = &n.value
+            {
+                return i
+                    .as_i64()
+                    .and_then(|value| value.checked_neg())
+                    .map(LiteralKey::Int);
             }
             None
         }

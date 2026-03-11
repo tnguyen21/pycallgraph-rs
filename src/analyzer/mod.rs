@@ -10,7 +10,11 @@
 //!    inherited edges, collapse inner scopes, resolve imports.
 
 mod mro;
+mod pipeline;
 mod postprocess;
+mod prepass;
+mod resolution;
+mod state;
 mod util;
 
 use mro::resolve_mro;
@@ -255,6 +259,10 @@ pub(super) struct AnalysisSession {
     /// Maps function/method NodeId -> set of NodeIds that the function may return.
     /// Populated during `visit_stmt(Return)` and consumed in `visit_call`.
     pub(super) function_returns: HashMap<NodeId, HashSet<NodeId>>,
+    /// Set during a propagation pass when a function gains a newly-discovered
+    /// return value. Used to detect fixpoint convergence without cloning the
+    /// entire `function_returns` map every pass.
+    function_returns_changed: bool,
 
     pub(super) filenames: Vec<String>,
     pub(super) root: Option<String>,
@@ -312,1023 +320,7 @@ impl DerefMut for AnalysisSession {
     }
 }
 
-// =========================================================================
-// Construction and high-level processing
-// =========================================================================
-
-impl CallGraph {
-    /// Analyze a set of Python files and return the resulting call graph.
-    pub fn new(filenames: &[String], root: Option<&str>) -> Result<Self> {
-        let mut session = AnalysisSession::new(filenames, root);
-        session.process()?;
-        Ok(session.into_call_graph())
-    }
-}
-
 impl AnalysisSession {
-    fn new(filenames: &[String], root: Option<&str>) -> Self {
-        let mut module_to_filename = HashMap::new();
-        for filename in filenames {
-            let mod_name = get_module_name(filename, root);
-            module_to_filename.insert(mod_name, filename.clone());
-        }
-
-        Self {
-            graph: CallGraph {
-                nodes_arena: Vec::new(),
-                nodes_by_name: HashMap::new(),
-                defines_edges: HashMap::new(),
-                uses_edges: HashMap::new(),
-                defined: HashSet::new(),
-                module_to_filename,
-            },
-            node_ids_by_key: HashMap::new(),
-            scopes: HashMap::new(),
-            function_returns: HashMap::new(),
-            class_base_ast_info: HashMap::new(),
-            class_base_nodes: HashMap::new(),
-            mro: HashMap::new(),
-            filenames: filenames.to_vec(),
-            root: root.map(|s| s.to_string()),
-            module_name: String::new(),
-            filename: String::new(),
-            name_stack: Vec::new(),
-            scope_stack: Vec::new(),
-            class_stack: Vec::new(),
-            context_stack: Vec::new(),
-        }
-    }
-
-    fn into_call_graph(self) -> CallGraph {
-        self.graph
-    }
-
-    /// Two-pass analysis followed by a fixpoint loop for return-value propagation.
-    fn process(&mut self) -> Result<()> {
-        let cached_files = self.prepare_files()?;
-        for cached_file in &cached_files {
-            self.merge_scopes(&cached_file.scopes);
-        }
-
-        for pass_num in 0..2 {
-            for cached_file in &cached_files {
-                debug!(
-                    "========== pass {}, file '{}' ==========",
-                    pass_num + 1,
-                    cached_file.filename
-                );
-                self.process_one(cached_file);
-            }
-            if pass_num == 0 {
-                self.resolve_base_classes();
-            }
-        }
-
-        // Fixpoint: keep re-analyzing until function_returns stabilises.
-        // Each extra pass may propagate return types discovered in the previous
-        // pass through call sites, enabling downstream attribute resolution.
-        const MAX_PROPAGATION_PASSES: usize = 8;
-        for pass_num in 0..MAX_PROPAGATION_PASSES {
-            let prev_returns = self.function_returns.clone();
-            for cached_file in &cached_files {
-                debug!(
-                    "========== propagation pass {}, file '{}' ==========",
-                    pass_num + 1,
-                    cached_file.filename
-                );
-                self.process_one(cached_file);
-            }
-            if self.function_returns == prev_returns {
-                debug!(
-                    "Return propagation converged after {} extra passes",
-                    pass_num + 1
-                );
-                break;
-            }
-        }
-
-        self.postprocess();
-        Ok(())
-    }
-
-    fn prepare_files(&self) -> Result<Vec<CachedFile>> {
-        let mut cached_files = Vec::with_capacity(self.filenames.len());
-        for filename in &self.filenames {
-            let content =
-                std::fs::read_to_string(filename).with_context(|| format!("reading {filename}"))?;
-            let module_name = get_module_name(filename, self.root.as_deref());
-            let parsed =
-                ruff_python_parser::parse_unchecked(&content, ParseOptions::from(Mode::Module));
-            let module = match parsed.into_syntax() {
-                Mod::Module(module) => module,
-                _ => continue,
-            };
-            let line_index = LineIndex::from_source_text(&content);
-            let scopes = Self::build_scopes(&module, &module_name);
-            cached_files.push(CachedFile {
-                filename: filename.clone(),
-                module_name,
-                module,
-                line_index,
-                scopes,
-            });
-        }
-        Ok(cached_files)
-    }
-
-    /// Analyze a single Python source file.
-    fn process_one(&mut self, cached_file: &CachedFile) {
-        self.filename = cached_file.filename.clone();
-        self.module_name = cached_file.module_name.clone();
-
-        self.visit_module(&cached_file.module, &cached_file.line_index);
-
-        self.module_name.clear();
-        self.filename.clear();
-    }
-
-    // =====================================================================
-    // Scope analysis (pre-pass) — replaces Python's `symtable`
-    // =====================================================================
-
-    /// Gather scope information by walking the cached AST.
-    fn build_scopes(module: &ModModule, module_ns: &str) -> HashMap<String, ScopeInfo> {
-        let mut scopes: HashMap<String, ScopeInfo> = HashMap::new();
-
-        // Module-level scope
-        let mut module_scope = ScopeInfo::new("");
-        Self::collect_scope_defs(&module.body, &mut module_scope);
-        scopes.insert(module_ns.to_string(), module_scope);
-
-        // Nested scopes
-        Self::collect_nested_scopes(&module.body, module_ns, &mut scopes);
-
-        scopes
-    }
-
-    fn merge_scopes(&mut self, scopes: &HashMap<String, ScopeInfo>) {
-        // Merge into existing scopes (union values rather than overwrite)
-        for (ns, sc) in scopes {
-            if let Some(existing) = self.scopes.get_mut(ns.as_str()) {
-                for (name, vs) in &sc.defs {
-                    existing
-                        .defs
-                        .entry(name.clone())
-                        .or_default()
-                        .union_with(vs);
-                }
-                for (name, facts) in &sc.containers {
-                    existing
-                        .containers
-                        .entry(name.clone())
-                        .or_default()
-                        .union_with(facts);
-                }
-                // Propagate __all__ if newly discovered.
-                if existing.all_exports.is_none() && sc.all_exports.is_some() {
-                    existing.all_exports = sc.all_exports.clone();
-                }
-            } else {
-                self.scopes.insert(ns.clone(), sc.clone());
-            }
-        }
-    }
-
-    /// Collect names defined (bound) at this scope level.
-    fn collect_scope_defs(stmts: &[Stmt], scope: &mut ScopeInfo) {
-        for stmt in stmts {
-            match stmt {
-                Stmt::FunctionDef(f) => {
-                    let name = f.name.id.to_string();
-                    scope.defs.entry(name.clone()).or_default();
-                    scope.locals.insert(name);
-                }
-                Stmt::ClassDef(c) => {
-                    let name = c.name.id.to_string();
-                    scope.defs.entry(name.clone()).or_default();
-                    scope.locals.insert(name);
-                }
-                Stmt::Import(imp) => {
-                    for alias in &imp.names {
-                        let name = if let Some(ref asname) = alias.asname {
-                            asname.id.to_string()
-                        } else {
-                            alias.name.id.to_string()
-                        };
-                        scope.defs.entry(name).or_default();
-                    }
-                }
-                Stmt::ImportFrom(imp) => {
-                    for alias in &imp.names {
-                        // Skip star imports — names are injected during the visit
-                        // phase once the source module's scope is available.
-                        if alias.name.id.as_str() == "*" {
-                            continue;
-                        }
-                        let name = if let Some(ref asname) = alias.asname {
-                            asname.id.to_string()
-                        } else {
-                            alias.name.id.to_string()
-                        };
-                        scope.defs.entry(name).or_default();
-                    }
-                }
-                Stmt::Assign(a) => {
-                    for target in &a.targets {
-                        // Detect `__all__ = [...]` or `__all__ = (...)` and
-                        // record the statically-known export list.
-                        if let Expr::Name(n) = target {
-                            if n.id.as_str() == "__all__" {
-                                if let Some(exports) = extract_all_exports(&a.value) {
-                                    scope.all_exports = Some(exports);
-                                }
-                            }
-                        }
-                        Self::collect_assign_target_names(target, scope);
-                    }
-                }
-                Stmt::AugAssign(a) => {
-                    Self::collect_assign_target_names(&a.target, scope);
-                }
-                Stmt::AnnAssign(a) => {
-                    Self::collect_assign_target_names(&a.target, scope);
-                }
-                Stmt::For(f) => {
-                    Self::collect_assign_target_names(&f.target, scope);
-                    // Do NOT recurse into body for scope defs at *this* level;
-                    // we only capture the target bindings.
-                }
-                Stmt::Global(g) => {
-                    for name in &g.names {
-                        scope.defs.entry(name.id.to_string()).or_default();
-                    }
-                }
-                Stmt::Nonlocal(n) => {
-                    for name in &n.names {
-                        scope.defs.entry(name.id.to_string()).or_default();
-                    }
-                }
-                // If/While/With/Try — recurse into their bodies at the same
-                // scope level (Python does not create new scopes for these).
-                Stmt::If(s) => {
-                    Self::collect_scope_defs(&s.body, scope);
-                    for clause in &s.elif_else_clauses {
-                        Self::collect_scope_defs(&clause.body, scope);
-                    }
-                }
-                Stmt::While(s) => {
-                    Self::collect_scope_defs(&s.body, scope);
-                    Self::collect_scope_defs(&s.orelse, scope);
-                }
-                Stmt::With(s) => {
-                    for item in &s.items {
-                        if let Some(ref vars) = item.optional_vars {
-                            Self::collect_assign_target_names(vars, scope);
-                        }
-                    }
-                    Self::collect_scope_defs(&s.body, scope);
-                }
-                Stmt::Try(s) => {
-                    Self::collect_scope_defs(&s.body, scope);
-                    for handler in &s.handlers {
-                        let ExceptHandler::ExceptHandler(h) = handler;
-                        if let Some(ref name) = h.name {
-                            scope.defs.entry(name.id.to_string()).or_default();
-                            scope.locals.insert(name.id.to_string());
-                        }
-                        Self::collect_scope_defs(&h.body, scope);
-                    }
-                    Self::collect_scope_defs(&s.orelse, scope);
-                    Self::collect_scope_defs(&s.finalbody, scope);
-                }
-                _ => {}
-            }
-        }
-    }
-
-    /// Recurse into function/class bodies to create child scopes.
-    fn collect_nested_scopes(
-        stmts: &[Stmt],
-        parent_ns: &str,
-        scopes: &mut HashMap<String, ScopeInfo>,
-    ) {
-        for stmt in stmts {
-            match stmt {
-                Stmt::FunctionDef(f) => {
-                    let name = f.name.id.to_string();
-                    let ns = format!("{parent_ns}.{name}");
-                    let mut scope = ScopeInfo::new(&name);
-
-                    // Add parameter names (declared with empty ValueSet)
-                    for param in &f.parameters.args {
-                        let pname = param.parameter.name.id.to_string();
-                        scope.defs.entry(pname.clone()).or_default();
-                        scope.locals.insert(pname);
-                    }
-                    for param in &f.parameters.posonlyargs {
-                        let pname = param.parameter.name.id.to_string();
-                        scope.defs.entry(pname.clone()).or_default();
-                        scope.locals.insert(pname);
-                    }
-                    for param in &f.parameters.kwonlyargs {
-                        let pname = param.parameter.name.id.to_string();
-                        scope.defs.entry(pname.clone()).or_default();
-                        scope.locals.insert(pname);
-                    }
-                    if let Some(ref va) = f.parameters.vararg {
-                        let pname = va.name.id.to_string();
-                        scope.defs.entry(pname.clone()).or_default();
-                        scope.locals.insert(pname);
-                    }
-                    if let Some(ref kw) = f.parameters.kwarg {
-                        let pname = kw.name.id.to_string();
-                        scope.defs.entry(pname.clone()).or_default();
-                        scope.locals.insert(pname);
-                    }
-
-                    Self::collect_scope_defs(&f.body, &mut scope);
-                    scopes.insert(ns.clone(), scope);
-                    Self::collect_nested_scopes(&f.body, &ns, scopes);
-                }
-                Stmt::ClassDef(c) => {
-                    let name = c.name.id.to_string();
-                    let ns = format!("{parent_ns}.{name}");
-                    let mut scope = ScopeInfo::new(&name);
-                    Self::collect_scope_defs(&c.body, &mut scope);
-                    scopes.insert(ns.clone(), scope);
-                    Self::collect_nested_scopes(&c.body, &ns, scopes);
-                }
-                // Recurse into compound statements that don't create new
-                // scopes (if/while/with/try/for).
-                Stmt::If(s) => {
-                    Self::collect_nested_scopes(&s.body, parent_ns, scopes);
-                    for clause in &s.elif_else_clauses {
-                        Self::collect_nested_scopes(&clause.body, parent_ns, scopes);
-                    }
-                }
-                Stmt::While(s) => {
-                    Self::collect_nested_scopes(&s.body, parent_ns, scopes);
-                    Self::collect_nested_scopes(&s.orelse, parent_ns, scopes);
-                }
-                Stmt::For(s) => {
-                    Self::collect_nested_scopes(&s.body, parent_ns, scopes);
-                    Self::collect_nested_scopes(&s.orelse, parent_ns, scopes);
-                }
-                Stmt::With(s) => {
-                    Self::collect_nested_scopes(&s.body, parent_ns, scopes);
-                }
-                Stmt::Try(s) => {
-                    Self::collect_nested_scopes(&s.body, parent_ns, scopes);
-                    for handler in &s.handlers {
-                        let ExceptHandler::ExceptHandler(h) = handler;
-                        Self::collect_nested_scopes(&h.body, parent_ns, scopes);
-                    }
-                    Self::collect_nested_scopes(&s.orelse, parent_ns, scopes);
-                    Self::collect_nested_scopes(&s.finalbody, parent_ns, scopes);
-                }
-                _ => {}
-            }
-        }
-    }
-
-    /// Extract names from an assignment target expression.
-    fn collect_assign_target_names(target: &Expr, scope: &mut ScopeInfo) {
-        match target {
-            Expr::Name(n) => {
-                let name = n.id.to_string();
-                scope.defs.entry(name.clone()).or_default();
-                scope.locals.insert(name);
-            }
-            Expr::Tuple(t) => {
-                for elt in &t.elts {
-                    Self::collect_assign_target_names(elt, scope);
-                }
-            }
-            Expr::List(l) => {
-                for elt in &l.elts {
-                    Self::collect_assign_target_names(elt, scope);
-                }
-            }
-            Expr::Starred(s) => {
-                Self::collect_assign_target_names(&s.value, scope);
-            }
-            _ => {} // Attribute, Subscript — not local bindings
-        }
-    }
-
-    // =====================================================================
-    // Node creation and lookup
-    // =====================================================================
-
-    /// Get or create the unique node for (namespace, name).
-    pub(super) fn get_node(
-        &mut self,
-        namespace: Option<&str>,
-        name: &str,
-        flavor: Flavor,
-    ) -> NodeId {
-        let key = NodeKey::new(namespace, name);
-        if let Some(&id) = self.node_ids_by_key.get(&key) {
-            let n = &self.nodes_arena[id];
-            // Update flavor if strictly more specific
-            if flavor.specificity() > n.flavor.specificity() {
-                self.nodes_arena[id].flavor = flavor;
-            }
-            return id;
-        }
-
-        // Determine filename
-        let filename = if let Some(ns) = namespace {
-            if let Some(f) = self.module_to_filename.get(ns) {
-                Some(f.clone())
-            } else {
-                Some(self.filename.clone())
-            }
-        } else {
-            Some(self.filename.clone())
-        };
-
-        let mut node = Node::new(namespace, name, flavor);
-        node.filename = filename;
-        let id = self.nodes_arena.len();
-        // Wildcard nodes (namespace=None) start as defined
-        if namespace.is_none() {
-            self.defined.insert(id);
-        }
-
-        self.nodes_arena.push(node);
-        self.node_ids_by_key.insert(key, id);
-        self.nodes_by_name
-            .entry(name.to_string())
-            .or_default()
-            .push(id);
-        id
-    }
-
-    /// Get the node representing the current namespace.
-    fn get_node_of_current_namespace(&mut self) -> NodeId {
-        assert!(!self.name_stack.is_empty());
-        let namespace = if self.name_stack.len() > 1 {
-            self.name_stack[..self.name_stack.len() - 1].join(".")
-        } else {
-            String::new()
-        };
-        let name = self
-            .name_stack
-            .last()
-            .expect("name_stack must not be empty during AST walk")
-            .clone();
-        self.get_node(Some(&namespace), &name, Flavor::Namespace)
-    }
-
-    /// Get the parent node of the given node (by splitting its namespace).
-    pub(super) fn get_parent_node(&mut self, node_id: NodeId) -> NodeId {
-        let node = &self.nodes_arena[node_id];
-        let (ns, name) = if let Some(ref namespace) = node.namespace {
-            if namespace.contains('.') {
-                let (parent_ns, parent_name) = namespace
-                    .rsplit_once('.')
-                    .expect("namespace contains '.' (checked above)");
-                (parent_ns.to_string(), parent_name.to_string())
-            } else {
-                (String::new(), namespace.clone())
-            }
-        } else {
-            (String::new(), String::new())
-        };
-        self.get_node(Some(&ns), &name, Flavor::Namespace)
-    }
-
-    /// Associate a node with a filename and line number.
-    fn associate_node(&mut self, node_id: NodeId, filename: &str, line: usize) {
-        self.nodes_arena[node_id].filename = Some(filename.to_string());
-        self.nodes_arena[node_id].line = Some(line);
-    }
-
-    // =====================================================================
-    // Edge management
-    // =====================================================================
-
-    pub(super) fn add_defines_edge(&mut self, from_id: NodeId, to_id: Option<NodeId>) -> bool {
-        self.defined.insert(from_id);
-        if let Some(to) = to_id {
-            self.defined.insert(to);
-            self.defines_edges.entry(from_id).or_default().insert(to)
-        } else {
-            false
-        }
-    }
-
-    pub(super) fn add_uses_edge(&mut self, from_id: NodeId, to_id: NodeId) -> bool {
-        let entry = self.uses_edges.entry(from_id).or_default();
-        if entry.insert(to_id) {
-            // Remove matching wildcard
-            let to_ns = self.nodes_arena[to_id].namespace.clone();
-            let to_name = self.nodes_arena[to_id].name.clone();
-            if to_ns.is_some() {
-                self.remove_wild(from_id, to_id, &to_name);
-            }
-            true
-        } else {
-            false
-        }
-    }
-
-    pub(super) fn remove_uses_edge(&mut self, from_id: NodeId, to_id: NodeId) {
-        if let Some(edges) = self.uses_edges.get_mut(&from_id) {
-            edges.remove(&to_id);
-        }
-    }
-
-    /// Remove uses edge from `from_id` to wildcard `*.name`.
-    fn remove_wild(&mut self, from_id: NodeId, to_id: NodeId, name: &str) {
-        if name.is_empty() {
-            return;
-        }
-        let Some(edges) = self.uses_edges.get(&from_id) else {
-            return;
-        };
-
-        // Don't remove if target is an argument sentinel
-        let to_name = &self.nodes_arena[to_id].get_name();
-        if to_name.contains("^^^argument^^^") {
-            return;
-        }
-
-        // Don't remove self-references
-        if to_id == from_id {
-            return;
-        }
-
-        let wild = edges
-            .iter()
-            .find(|&&eid| {
-                let n = &self.nodes_arena[eid];
-                n.namespace.is_none() && n.name == name
-            })
-            .copied();
-
-        if let Some(wild_id) = wild {
-            info!(
-                "Use from {} to {} resolves {}; removing wildcard",
-                self.nodes_arena[from_id].get_name(),
-                self.nodes_arena[to_id].get_name(),
-                self.nodes_arena[wild_id].get_name()
-            );
-            self.remove_uses_edge(from_id, wild_id);
-        }
-    }
-
-    // =====================================================================
-    // Value getter/setter (scope-based name resolution)
-    // =====================================================================
-
-    /// Get the first (any) value of `name` in the current scope stack.
-    ///
-    /// This is a backward-compat shim over `get_values`.  Prefer `get_values`
-    /// when iterating over all possible pointees.
-    fn get_value(&self, name: &str) -> Option<NodeId> {
-        self.get_values(name).first()
-    }
-
-    /// Get all possible values of `name` in the current scope stack.
-    ///
-    /// Walks from innermost to outermost scope and returns the `ValueSet` from
-    /// the first scope that declares the name.
-    fn get_values(&self, name: &str) -> ValueSet {
-        for scope_key in self.scope_stack.iter().rev() {
-            if let Some(scope) = self.scopes.get(scope_key)
-                && let Some(vs) = scope.defs.get(name)
-            {
-                return vs.clone();
-            }
-        }
-        ValueSet::empty()
-    }
-
-    /// Get all shallow container facts of `name` in the current scope stack.
-    fn get_containers(&self, name: &str) -> ContainerFacts {
-        for scope_key in self.scope_stack.iter().rev() {
-            if let Some(scope) = self.scopes.get(scope_key)
-                && let Some(facts) = scope.containers.get(name)
-            {
-                return facts.clone();
-            }
-        }
-        ContainerFacts::default()
-    }
-
-    /// Add `value` to the binding set of `name` in the innermost scope that
-    /// declares it.  If `value` is `None`, just ensure the name is declared
-    /// (creates an empty entry if needed).
-    ///
-    /// Unlike the old single-value overwrite, this **unions** rather than
-    /// replaces, so all plausible pointees from different branches are kept.
-    fn set_value(&mut self, name: &str, value: Option<NodeId>) {
-        for scope_key in self.scope_stack.iter().rev() {
-            if let Some(scope) = self.scopes.get(scope_key)
-                && scope.defs.contains_key(name)
-            {
-                let scope = self
-                    .scopes
-                    .get_mut(scope_key)
-                    .expect("scope confirmed to exist above");
-                if let Some(id) = value {
-                    scope.defs.entry(name.to_string()).or_default().insert(id);
-                }
-                // If value is None: name already declared — nothing to add.
-                return;
-            }
-        }
-        // Not declared in any enclosing scope — add to current scope.
-        if let Some(scope_key) = self.scope_stack.last() {
-            let scope_key = scope_key.clone();
-            if let Some(scope) = self.scopes.get_mut(&scope_key) {
-                if let Some(id) = value {
-                    scope.defs.entry(name.to_string()).or_default().insert(id);
-                } else {
-                    scope.defs.entry(name.to_string()).or_default();
-                }
-            }
-        }
-    }
-
-    /// Add shallow container facts to the binding of `name` in the innermost
-    /// scope that declares it.
-    fn set_containers(&mut self, name: &str, containers: &ContainerFacts) {
-        if containers.is_empty() {
-            return;
-        }
-
-        for scope_key in self.scope_stack.iter().rev() {
-            if let Some(scope) = self.scopes.get(scope_key)
-                && scope.defs.contains_key(name)
-            {
-                let scope = self
-                    .scopes
-                    .get_mut(scope_key)
-                    .expect("scope confirmed to exist above");
-                scope
-                    .containers
-                    .entry(name.to_string())
-                    .or_default()
-                    .union_with(containers);
-                return;
-            }
-        }
-
-        if let Some(scope_key) = self.scope_stack.last() {
-            let scope_key = scope_key.clone();
-            if let Some(scope) = self.scopes.get_mut(&scope_key) {
-                scope
-                    .containers
-                    .entry(name.to_string())
-                    .or_default()
-                    .union_with(containers);
-            }
-        }
-    }
-
-    /// Check if a name is a local in the current (innermost) scope.
-    fn is_local(&self, name: &str) -> bool {
-        if let Some(scope_key) = self.scope_stack.last()
-            && let Some(scope) = self.scopes.get(scope_key)
-        {
-            return scope.locals.contains(name);
-        }
-        false
-    }
-
-    /// Get the current class node, if inside a class definition.
-    fn get_current_class(&self) -> Option<NodeId> {
-        self.class_stack.last().copied()
-    }
-
-    // =====================================================================
-    // Attribute access helpers
-    // =====================================================================
-
-    /// Resolve an attribute chain: `obj.attr` -> (obj_node_id, attr_name).
-    ///
-    /// Returns the *first* possible object node for backward compatibility.
-    /// Call sites that need all possible objects should use
-    /// `get_obj_ids_for_expr` instead.
-    fn resolve_attribute(&mut self, expr: &ExprAttribute) -> (Option<NodeId>, String) {
-        let attr_name = expr.attr.id.to_string();
-
-        match expr.value.as_ref() {
-            Expr::Attribute(inner_attr) => {
-                let (obj_node, inner_attr_name) = self.resolve_attribute(inner_attr);
-
-                if let Some(obj_id) = obj_node
-                    && self.nodes_arena[obj_id].namespace.is_some()
-                {
-                    let ns = self.nodes_arena[obj_id].get_name();
-                    if let Some(val) = self.lookup_in_scope(&ns, &inner_attr_name) {
-                        return (Some(val), attr_name);
-                    }
-                }
-                (None, attr_name)
-            }
-            Expr::Call(call) => {
-                // Try to resolve builtins like super()
-                if let Some(result_id) = self.resolve_builtins(call) {
-                    (Some(result_id), attr_name)
-                } else {
-                    (None, attr_name)
-                }
-            }
-            _ => {
-                let obj_name = get_ast_node_name(&expr.value);
-                if let Some(obj_id) = self.get_value(&obj_name) {
-                    (Some(obj_id), attr_name)
-                } else {
-                    (None, attr_name)
-                }
-            }
-        }
-    }
-
-    /// Collect all possible NodeIds that an expression can resolve to.
-    ///
-    /// For `Name` exprs: returns all values in the binding set.
-    /// For `Attribute` exprs: resolves object (multi-value) then looks up attr.
-    /// For `Call` exprs: tries builtin resolution.
-    /// Returns an empty vec for unresolvable expressions.
-    fn get_obj_ids_for_expr(&mut self, expr: &Expr) -> Vec<NodeId> {
-        match expr {
-            Expr::Name(n) if n.ctx == ExprContext::Load => {
-                self.get_values(&n.id.to_string()).iter().collect()
-            }
-            Expr::Attribute(a) => {
-                // Get all possible values for this nested attribute
-                let attr_name = a.attr.id.to_string();
-                let obj_ids = self.get_obj_ids_for_expr(&a.value);
-                let mut results = Vec::new();
-                for obj_id in obj_ids {
-                    if self.nodes_arena[obj_id].namespace.is_none() {
-                        continue;
-                    }
-                    let ns = self.nodes_arena[obj_id].get_name();
-                    let vs = self.lookup_values_in_scope(&ns, &attr_name);
-                    if vs.is_empty() {
-                        // Try MRO
-                        if let Some(mro) = self.mro.get(&obj_id).cloned() {
-                            for &base_id in mro.iter().skip(1) {
-                                let base_ns = self.nodes_arena[base_id].get_name();
-                                let bvs = self.lookup_values_in_scope(&base_ns, &attr_name);
-                                for id in bvs.iter() {
-                                    if !results.contains(&id) {
-                                        results.push(id);
-                                    }
-                                }
-                                if !bvs.is_empty() {
-                                    break;
-                                }
-                            }
-                        }
-                    } else {
-                        for id in vs.iter() {
-                            if !results.contains(&id) {
-                                results.push(id);
-                            }
-                        }
-                    }
-                }
-                results
-            }
-            Expr::Call(c) => {
-                if let Some(id) = self.resolve_builtins(c) {
-                    return vec![id];
-                }
-                // For non-builtin calls, resolve the callee and look up return types
-                // so that chained attribute access like `make().method()` can proceed.
-                let func_ids = self.get_obj_ids_for_expr(&c.func);
-                let mut results = Vec::new();
-                for &func_id in &func_ids {
-                    // Class instantiation: the class node is the "instance type".
-                    if self.class_base_ast_info.contains_key(&func_id) {
-                        if !results.contains(&func_id) {
-                            results.push(func_id);
-                        }
-                    }
-                    // Function call: propagate all statically-known return values.
-                    if let Some(ret_ids) = self.function_returns.get(&func_id).cloned() {
-                        for ret_id in ret_ids {
-                            if !results.contains(&ret_id) {
-                                results.push(ret_id);
-                            }
-                        }
-                    }
-                }
-                results
-            }
-            Expr::Subscript(s) => {
-                let resolved = self.resolve_subscript_value(s);
-                if !resolved.values.is_empty() {
-                    resolved.values.iter().collect()
-                } else {
-                    self.get_obj_ids_for_expr(&s.value)
-                }
-            }
-            _ => vec![],
-        }
-    }
-
-    /// Look up the first value of a name in a specific (named) scope.
-    ///
-    /// Returns `None` if the scope doesn't exist or the name is unbound.
-    /// Use `lookup_values_in_scope` to get all possible values.
-    fn lookup_in_scope(&self, ns: &str, name: &str) -> Option<NodeId> {
-        self.lookup_values_in_scope(ns, name).first()
-    }
-
-    /// Look up all possible values of a name in a specific (named) scope.
-    pub(super) fn lookup_values_in_scope(&self, ns: &str, name: &str) -> ValueSet {
-        if let Some(scope) = self.scopes.get(ns) {
-            if let Some(vs) = scope.defs.get(name) {
-                return vs.clone();
-            }
-        }
-        ValueSet::empty()
-    }
-
-    /// Look up shallow container facts of a name in a specific (named) scope.
-    fn lookup_containers_in_scope(&self, ns: &str, name: &str) -> ContainerFacts {
-        if let Some(scope) = self.scopes.get(ns) {
-            if let Some(facts) = scope.containers.get(name) {
-                return facts.clone();
-            }
-        }
-        ContainerFacts::default()
-    }
-
-    /// Add an attribute value to the object's scope (additive — does not
-    /// overwrite existing bindings for the same attribute name).
-    fn set_attribute(&mut self, expr: &ExprAttribute, value: Option<NodeId>) -> bool {
-        let (obj_node, attr_name) = self.resolve_attribute(expr);
-
-        if let Some(obj_id) = obj_node
-            && self.nodes_arena[obj_id].namespace.is_some()
-        {
-            let ns = self.nodes_arena[obj_id].get_name();
-            if let Some(scope) = self.scopes.get_mut(&ns) {
-                if let Some(id) = value {
-                    scope.defs.entry(attr_name).or_default().insert(id);
-                } else {
-                    scope.defs.entry(attr_name).or_default();
-                }
-                return true;
-            }
-        }
-        false
-    }
-
-    fn set_attribute_shallow_value(&mut self, expr: &ExprAttribute, value: &ShallowValue) -> bool {
-        let (obj_node, attr_name) = self.resolve_attribute(expr);
-
-        if let Some(obj_id) = obj_node
-            && self.nodes_arena[obj_id].namespace.is_some()
-        {
-            let ns = self.nodes_arena[obj_id].get_name();
-            if let Some(scope) = self.scopes.get_mut(&ns) {
-                if !value.values.is_empty() {
-                    scope
-                        .defs
-                        .entry(attr_name.clone())
-                        .or_default()
-                        .union_with(&value.values);
-                } else {
-                    scope.defs.entry(attr_name.clone()).or_default();
-                }
-                if !value.containers.is_empty() {
-                    scope
-                        .containers
-                        .entry(attr_name)
-                        .or_default()
-                        .union_with(&value.containers);
-                }
-                return true;
-            }
-        }
-        false
-    }
-
-    fn resolve_shallow_value(&mut self, expr: &Expr) -> ShallowValue {
-        match expr {
-            Expr::Name(node) if node.ctx == ExprContext::Load => ShallowValue {
-                values: self.get_values(node.id.as_ref()),
-                containers: self.get_containers(node.id.as_ref()),
-            },
-            Expr::Attribute(node) if node.ctx == ExprContext::Load => {
-                let mut resolved = ShallowValue::default();
-                let obj_ids = self.get_obj_ids_for_expr(&node.value);
-                for obj_id in obj_ids {
-                    if self.nodes_arena[obj_id].namespace.is_none() {
-                        continue;
-                    }
-
-                    let ns = self.nodes_arena[obj_id].get_name();
-                    let attr_name = node.attr.id.to_string();
-                    let direct_values = self.lookup_values_in_scope(&ns, &attr_name);
-                    let direct_containers = self.lookup_containers_in_scope(&ns, &attr_name);
-
-                    if direct_values.is_empty() && direct_containers.is_empty() {
-                        if let Some(mro) = self.mro.get(&obj_id).cloned() {
-                            for &base_id in mro.iter().skip(1) {
-                                let base_ns = self.nodes_arena[base_id].get_name();
-                                let base_values = self.lookup_values_in_scope(&base_ns, &attr_name);
-                                let base_containers =
-                                    self.lookup_containers_in_scope(&base_ns, &attr_name);
-                                if !base_values.is_empty() || !base_containers.is_empty() {
-                                    resolved.values.union_with(&base_values);
-                                    resolved.containers.union_with(&base_containers);
-                                    break;
-                                }
-                            }
-                        }
-                    } else {
-                        resolved.values.union_with(&direct_values);
-                        resolved.containers.union_with(&direct_containers);
-                    }
-                }
-                resolved
-            }
-            Expr::Call(node) => {
-                let mut resolved = ShallowValue::default();
-                let func_ids = self.get_obj_ids_for_expr(&node.func);
-                for func_id in func_ids {
-                    if self.class_base_ast_info.contains_key(&func_id) {
-                        resolved.values.insert(func_id);
-                    }
-                    if let Some(ret_ids) = self.function_returns.get(&func_id).cloned() {
-                        for ret_id in ret_ids {
-                            resolved.values.insert(ret_id);
-                        }
-                    }
-                }
-                resolved
-            }
-            Expr::Tuple(node) => {
-                let mut facts = ContainerFacts::default();
-                let items = node
-                    .elts
-                    .iter()
-                    .map(|elt| self.resolve_shallow_value(elt))
-                    .collect();
-                facts.push(ContainerFact::Sequence(items));
-                ShallowValue {
-                    values: ValueSet::empty(),
-                    containers: facts,
-                }
-            }
-            Expr::List(node) => {
-                let mut facts = ContainerFacts::default();
-                let items = node
-                    .elts
-                    .iter()
-                    .map(|elt| self.resolve_shallow_value(elt))
-                    .collect();
-                facts.push(ContainerFact::Sequence(items));
-                ShallowValue {
-                    values: ValueSet::empty(),
-                    containers: facts,
-                }
-            }
-            Expr::Dict(node) => {
-                let mut items = HashMap::new();
-                for item in &node.items {
-                    let Some(ref key) = item.key else {
-                        continue;
-                    };
-                    let Some(key) = literal_key_from_expr(key) else {
-                        continue;
-                    };
-                    items
-                        .entry(key)
-                        .or_insert_with(ShallowValue::default)
-                        .union_with(&self.resolve_shallow_value(&item.value));
-                }
-                let mut facts = ContainerFacts::default();
-                if !items.is_empty() {
-                    facts.push(ContainerFact::Mapping(items));
-                }
-                ShallowValue {
-                    values: ValueSet::empty(),
-                    containers: facts,
-                }
-            }
-            Expr::Subscript(node) => self.resolve_subscript_value(node),
-            _ => ShallowValue::default(),
-        }
-    }
-
-    fn resolve_subscript_value(&mut self, node: &ExprSubscript) -> ShallowValue {
-        let container = self.resolve_shallow_value(&node.value);
-        let key = literal_key_from_expr(&node.slice);
-        container.containers.resolve_subscript(key.as_ref())
-    }
-
     // =====================================================================
     // Visitor methods
     // =====================================================================
@@ -1389,10 +381,7 @@ impl AnalysisSession {
                         let is_unknown = self.nodes_arena[ret_id].namespace.is_none();
                         if !is_sentinel && !is_unknown {
                             let fn_node = self.get_node_of_current_namespace();
-                            self.function_returns
-                                .entry(fn_node)
-                                .or_default()
-                                .insert(ret_id);
+                            self.record_function_return(fn_node, ret_id);
                         }
                     }
                 }
@@ -1529,20 +518,20 @@ impl AnalysisSession {
         }
 
         let line = line_index.line_index(node.range().start()).get();
-        self.associate_node(to_node, &self.filename.clone(), line);
+        let filename = self.filename.clone();
+        self.associate_node(to_node, &filename, line);
         self.set_value(&func_name, Some(to_node));
 
         // Decorator-chain call flow: each concrete (non-wildcard) decorator receives
         // the function as its argument, so emit decorator -> function uses edges.
         for &deco_id in &deco_ids {
-            if self.nodes_arena[deco_id].namespace.is_some() {
-                if self.add_uses_edge(deco_id, to_node) {
-                    info!(
-                        "New edge added: decorator {} uses function {}",
-                        self.nodes_arena[deco_id].get_name(),
-                        self.nodes_arena[to_node].get_name()
-                    );
-                }
+            if self.nodes_arena[deco_id].namespace.is_some() && self.add_uses_edge(deco_id, to_node)
+            {
+                info!(
+                    "New edge added: decorator {} uses function {}",
+                    self.nodes_arena[deco_id].get_name(),
+                    self.nodes_arena[to_node].get_name()
+                );
             }
         }
 
@@ -1959,8 +948,8 @@ impl AnalysisSession {
                     let func_cands = self.get_obj_ids_for_expr(&call.func);
                     let mut all_rets = Vec::new();
                     for &fid in &func_cands {
-                        if let Some(rets) = self.function_returns.get(&fid).cloned() {
-                            for ret_id in rets {
+                        if let Some(rets) = self.function_returns.get(&fid) {
+                            for &ret_id in rets {
                                 if Some(ret_id) != value_node && !all_rets.contains(&ret_id) {
                                     all_rets.push(ret_id);
                                 }
@@ -2024,9 +1013,9 @@ impl AnalysisSession {
                 let middle_start = n_pre;
                 let middle_end = n_rhs.saturating_sub(n_post);
                 let inner = &*starred.value;
-                for i in middle_start..middle_end {
-                    self.visit_expr(rhs_elts[i], line_index);
-                    let shallow = self.resolve_shallow_value(rhs_elts[i]);
+                for rhs in rhs_elts.iter().take(middle_end).skip(middle_start) {
+                    self.visit_expr(rhs, line_index);
+                    let shallow = self.resolve_shallow_value(rhs);
                     self.bind_target_to_shallow_value(inner, &shallow);
                 }
             }
@@ -2490,13 +1479,11 @@ impl AnalysisSession {
 
                     // Direct lookup in the object's scope, then MRO.
                     let attr_result = self.lookup_in_scope(&ns, &attr_name).or_else(|| {
-                        if let Some(mro) = self.mro.get(&obj_id).cloned() {
-                            for &base_id in mro.iter().skip(1) {
+                        if let Some(mro) = self.mro.get(&obj_id) {
+                            return mro.iter().skip(1).find_map(|&base_id| {
                                 let base_ns = self.nodes_arena[base_id].get_name();
-                                if let Some(val) = self.lookup_in_scope(&base_ns, &attr_name) {
-                                    return Some(val);
-                                }
-                            }
+                                self.lookup_in_scope(&base_ns, &attr_name)
+                            });
                         }
                         None
                     });
@@ -2600,10 +1587,10 @@ impl AnalysisSession {
         // can find the concrete callee that `visit_expr` misses.
         let func_candidates: Vec<NodeId> = {
             let mut cs = self.get_obj_ids_for_expr(&node.func);
-            if let Some(fn_id) = func_node {
-                if !cs.contains(&fn_id) {
-                    cs.push(fn_id);
-                }
+            if let Some(fn_id) = func_node
+                && !cs.contains(&fn_id)
+            {
+                cs.push(fn_id);
             }
             cs
         };
@@ -2614,18 +1601,21 @@ impl AnalysisSession {
         let from_node = self.get_node_of_current_namespace();
         let mut first_ret: Option<NodeId> = None;
         for &fid in &func_candidates {
-            if let Some(ret_ids) = self.function_returns.get(&fid).cloned() {
-                for ret_id in &ret_ids {
-                    if self.add_uses_edge(from_node, *ret_id) {
-                        info!(
-                            "New edge added for Use from {} to {} (return-value propagation)",
-                            self.nodes_arena[from_node].get_name(),
-                            self.nodes_arena[*ret_id].get_name()
-                        );
-                    }
-                    if first_ret.is_none() {
-                        first_ret = Some(*ret_id);
-                    }
+            let ret_ids: Vec<NodeId> = self
+                .function_returns
+                .get(&fid)
+                .map(|ret_ids| ret_ids.iter().copied().collect())
+                .unwrap_or_default();
+            for ret_id in ret_ids {
+                if self.add_uses_edge(from_node, ret_id) {
+                    info!(
+                        "New edge added for Use from {} to {} (return-value propagation)",
+                        self.nodes_arena[from_node].get_name(),
+                        self.nodes_arena[ret_id].get_name()
+                    );
+                }
+                if first_ret.is_none() {
+                    first_ret = Some(ret_id);
                 }
             }
         }
@@ -2754,21 +1744,21 @@ impl AnalysisSession {
                 }
             } else {
                 // Fall back to MRO chain.
-                if let Some(mro) = self.mro.get(&obj_id).cloned() {
-                    for &base_id in mro.iter().skip(1) {
+                let method_id = self.mro.get(&obj_id).and_then(|mro| {
+                    mro.iter().skip(1).find_map(|&base_id| {
                         let base_ns = self.nodes_arena[base_id].get_name();
-                        if let Some(method_id) = self.lookup_in_scope(&base_ns, method_name) {
-                            if self.add_uses_edge(from_node, method_id) {
-                                info!(
-                                    "New edge added for Use from {} to {} (protocol via MRO: {})",
-                                    self.nodes_arena[from_node].get_name(),
-                                    self.nodes_arena[method_id].get_name(),
-                                    method_name
-                                );
-                            }
-                            break;
-                        }
-                    }
+                        self.lookup_in_scope(&base_ns, method_name)
+                    })
+                });
+                if let Some(method_id) = method_id
+                    && self.add_uses_edge(from_node, method_id)
+                {
+                    info!(
+                        "New edge added for Use from {} to {} (protocol via MRO: {})",
+                        self.nodes_arena[from_node].get_name(),
+                        self.nodes_arena[method_id].get_name(),
+                        method_name
+                    );
                 }
             }
         }
@@ -2980,151 +1970,6 @@ impl AnalysisSession {
             self.analyze_binding_simple(target, iter_node, line_index);
         }
     }
-
-    // =====================================================================
-    // Builtin resolution
-    // =====================================================================
-
-    /// Resolve a call expression to a known builtin result.
-    ///
-    /// Handles:
-    /// - `super()` → resolve to parent class in MRO
-    /// - `str(x)` / `repr(x)` → emit `__str__`/`__repr__` protocol edge on x's class;
-    ///   returns None (str/repr produce strings, which aren't tracked nodes)
-    fn resolve_builtins_from_call(
-        &mut self,
-        node: &ExprCall,
-        _line_index: &LineIndex,
-    ) -> Option<NodeId> {
-        if let Expr::Name(ref func_name) = *node.func {
-            let name = func_name.id.as_str();
-            if name == "super" {
-                return self.resolve_super();
-            }
-            if name == "str" || name == "repr" {
-                // Emit __str__ / __repr__ protocol edge on the argument's class.
-                let method: &'static str = if name == "str" { "__str__" } else { "__repr__" };
-                if let Some(arg) = node.arguments.args.first() {
-                    let obj_ids = self.get_obj_ids_for_expr(arg);
-                    for obj_id in obj_ids {
-                        if self.class_base_ast_info.contains_key(&obj_id) {
-                            self.emit_protocol_edges(obj_id, &[method]);
-                        }
-                    }
-                }
-                return None; // str/repr return strings — not a tracked type node
-            }
-        }
-        None
-    }
-
-    /// Resolve a call (used in attribute resolution).
-    fn resolve_builtins(&mut self, node: &ExprCall) -> Option<NodeId> {
-        if let Expr::Name(ref func_name) = *node.func {
-            let name = func_name.id.as_str();
-            if name == "super" {
-                return self.resolve_super();
-            }
-        }
-        None
-    }
-
-    fn resolve_super(&self) -> Option<NodeId> {
-        let class_id = self.get_current_class()?;
-        let mro = self.mro.get(&class_id)?;
-        if mro.len() > 1 { Some(mro[1]) } else { None }
-    }
-
-    // =====================================================================
-    // Base class resolution and MRO
-    // =====================================================================
-
-    fn resolve_base_classes(&mut self) {
-        debug!("Resolving base classes");
-
-        // Collect all class -> base refs data (need to clone due to borrow issues)
-        let class_refs: Vec<(NodeId, Vec<BaseClassRef>)> = self
-            .class_base_ast_info
-            .iter()
-            .map(|(&cls_id, refs)| (cls_id, refs.clone()))
-            .collect();
-
-        let mut class_base_nodes: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
-
-        for (cls_id, refs) in &class_refs {
-            let mut bases = Vec::new();
-            let cls_namespace = self.nodes_arena[*cls_id]
-                .namespace
-                .clone()
-                .unwrap_or_default();
-
-            for base_ref in refs {
-                let base_id = match base_ref {
-                    BaseClassRef::Name(name) => {
-                        // Look up in enclosing scope
-                        self.lookup_base_by_name(&cls_namespace, name)
-                    }
-                    BaseClassRef::Attribute(parts) => {
-                        // Resolve attribute chain
-                        self.lookup_base_by_attr_parts(parts)
-                    }
-                };
-
-                if let Some(bid) = base_id
-                    && self.nodes_arena[bid].namespace.is_some()
-                {
-                    bases.push(bid);
-                }
-            }
-
-            class_base_nodes.insert(*cls_id, bases);
-        }
-
-        self.class_base_nodes = class_base_nodes;
-
-        // Compute MRO
-        debug!("Computing MRO for all analyzed classes");
-        self.mro = resolve_mro(&self.class_base_nodes);
-    }
-
-    fn lookup_base_by_name(&self, enclosing_ns: &str, name: &str) -> Option<NodeId> {
-        // Look up in enclosing scope
-        if let Some(val) = self.lookup_in_scope(enclosing_ns, name) {
-            return Some(val);
-        }
-
-        // Try module-level scope (walk up namespace hierarchy)
-        let parts: Vec<&str> = enclosing_ns.split('.').collect();
-        for i in (0..parts.len()).rev() {
-            let ns = parts[..=i].join(".");
-            if let Some(val) = self.lookup_in_scope(&ns, name) {
-                return Some(val);
-            }
-        }
-
-        None
-    }
-
-    fn lookup_base_by_attr_parts(&self, parts: &[String]) -> Option<NodeId> {
-        if parts.is_empty() {
-            return None;
-        }
-
-        // Start by looking up the first part
-        let mut current = self.get_value(&parts[0])?;
-
-        // Follow the chain
-        for part in parts.iter().skip(1) {
-            let ns = self.nodes_arena[current].get_name();
-            if let Some(val) = self.lookup_in_scope(&ns, part.as_str()) {
-                current = val;
-                continue;
-            }
-            return None;
-        }
-
-        Some(current)
-    }
 }
 
 #[cfg(test)]
@@ -3300,6 +2145,32 @@ finally:
     }
 
     #[test]
+    fn build_scopes_collects_for_body_and_else_bindings() {
+        let module = parse_module(
+            r#"
+for item in rows:
+    loop_value = item
+else:
+    from_for_else = 1
+"#,
+        );
+
+        let scopes = AnalysisSession::build_scopes(&module, "pkg.mod");
+        let scope = scopes.get("pkg.mod").expect("module scope should exist");
+
+        for name in ["item", "loop_value", "from_for_else"] {
+            assert!(
+                scope.defs.contains_key(name),
+                "missing scope def for {name}"
+            );
+            assert!(
+                scope.locals.contains(name),
+                "missing local binding for {name}"
+            );
+        }
+    }
+
+    #[test]
     fn merge_scopes_preserves_existing_exports() {
         let mut session = AnalysisSession::new(&[], None);
         let mut existing = ScopeInfo::new("");
@@ -3322,6 +2193,41 @@ finally:
             merged.all_exports,
             Some(HashSet::from([String::from("kept")])),
             "existing __all__ exports should not be overwritten by None"
+        );
+    }
+
+    #[test]
+    fn merge_scopes_unions_container_facts() {
+        let mut session = AnalysisSession::new(&[], None);
+
+        let mut existing = ScopeInfo::new("");
+        let mut existing_facts = ContainerFacts::default();
+        existing_facts.push(ContainerFact::Sequence(vec![ShallowValue::default()]));
+        existing
+            .containers
+            .insert("items".to_string(), existing_facts);
+        session.scopes.insert("pkg.mod".to_string(), existing);
+
+        let mut incoming = ScopeInfo::new("");
+        let mut mapping = HashMap::new();
+        mapping.insert(LiteralKey::String("k".to_string()), ShallowValue::default());
+        let mut incoming_facts = ContainerFacts::default();
+        incoming_facts.push(ContainerFact::Mapping(mapping));
+        incoming
+            .containers
+            .insert("items".to_string(), incoming_facts);
+
+        session.merge_scopes(&HashMap::from([("pkg.mod".to_string(), incoming)]));
+
+        let merged = session
+            .scopes
+            .get("pkg.mod")
+            .and_then(|scope| scope.containers.get("items"))
+            .expect("merged containers should exist");
+        assert_eq!(
+            merged.0.len(),
+            2,
+            "container facts should be unioned instead of replaced"
         );
     }
 
@@ -3431,15 +2337,13 @@ mod visitor_tests {
                 _ => None,
             })
             .unwrap_or_else(|| panic!("missing function {fn_name}"));
-        let ret = func
-            .body
+        func.body
             .iter()
             .find_map(|stmt| match stmt {
                 Stmt::Return(ret) => ret.value.as_ref(),
                 _ => None,
             })
-            .unwrap_or_else(|| panic!("missing return expr in {fn_name}"));
-        ret
+            .unwrap_or_else(|| panic!("missing return expr in {fn_name}"))
     }
 
     fn enter_function(session: &mut AnalysisSession, module_ns: &str, fn_name: &str) {
@@ -3969,5 +2873,116 @@ def outer(posonly, /, arg, *va, kw, **kwarg):
 
         assert!(session.is_local("local_name"));
         assert!(!session.is_local("missing"));
+    }
+
+    #[test]
+    fn record_function_return_sets_dirty_flag_only_for_new_values() {
+        let mut session = AnalysisSession::new(&[], None);
+        let func = session.get_node(Some("pkg.mod"), "factory", Flavor::Function);
+        let ret = session.get_node(Some("pkg.mod"), "Product", Flavor::Class);
+
+        assert!(session.record_function_return(func, ret));
+        assert!(
+            session.function_returns_changed,
+            "new return discoveries should mark the pass dirty"
+        );
+
+        session.function_returns_changed = false;
+        assert!(
+            !session.record_function_return(func, ret),
+            "re-inserting an existing return should be a no-op"
+        );
+        assert!(
+            !session.function_returns_changed,
+            "duplicate return discoveries should not keep the pass dirty"
+        );
+    }
+
+    #[test]
+    fn state_helpers_write_to_nearest_declaring_scope() {
+        let mut session = AnalysisSession::new(&[], None);
+
+        let mut outer = ScopeInfo::new("");
+        outer.defs.insert("shared".to_string(), ValueSet::empty());
+        let mut inner = ScopeInfo::new("");
+        inner
+            .defs
+            .insert("inner_only".to_string(), ValueSet::empty());
+
+        session.scopes.insert("pkg.mod".to_string(), outer);
+        session.scopes.insert("pkg.mod.inner".to_string(), inner);
+        session.scope_stack.push("pkg.mod".to_string());
+        session.scope_stack.push("pkg.mod.inner".to_string());
+
+        let value_id = session.get_node(Some("pkg.mod"), "Product", Flavor::Class);
+        let mut containers = ContainerFacts::default();
+        containers.push(ContainerFact::Sequence(vec![ShallowValue::default()]));
+
+        session.set_value("shared", Some(value_id));
+        session.set_containers("shared", &containers);
+
+        let outer_scope = session
+            .scopes
+            .get("pkg.mod")
+            .expect("outer scope should exist");
+        let inner_scope = session
+            .scopes
+            .get("pkg.mod.inner")
+            .expect("inner scope should exist");
+
+        assert!(
+            outer_scope
+                .defs
+                .get("shared")
+                .expect("outer binding should exist")
+                .iter()
+                .any(|id| id == value_id)
+        );
+        assert!(
+            outer_scope
+                .containers
+                .get("shared")
+                .is_some_and(|facts| !facts.is_empty()),
+            "outer declaring scope should receive container facts"
+        );
+        assert!(
+            !inner_scope.defs.contains_key("shared"),
+            "writes should not create a shadowing binding in the innermost scope"
+        );
+        assert!(
+            !inner_scope.containers.contains_key("shared"),
+            "container writes should target the nearest declaration"
+        );
+    }
+
+    #[test]
+    fn add_uses_edge_replaces_matching_wildcard_only() {
+        let mut session = AnalysisSession::new(&[], None);
+
+        let caller = session.get_node(Some("pkg.mod"), "caller", Flavor::Function);
+        let wildcard_foo = session.get_node(None, "foo", Flavor::Name);
+        let wildcard_bar = session.get_node(None, "bar", Flavor::Name);
+        let concrete_foo = session.get_node(Some("pkg.mod"), "foo", Flavor::Function);
+
+        assert!(session.add_uses_edge(caller, wildcard_foo));
+        assert!(session.add_uses_edge(caller, wildcard_bar));
+        assert!(session.add_uses_edge(caller, concrete_foo));
+
+        let edges = session
+            .uses_edges
+            .get(&caller)
+            .expect("caller should have uses edges");
+        assert!(
+            !edges.contains(&wildcard_foo),
+            "concrete resolution should remove the matching wildcard edge"
+        );
+        assert!(
+            edges.contains(&wildcard_bar),
+            "unrelated wildcard edges should remain"
+        );
+        assert!(
+            edges.contains(&concrete_foo),
+            "concrete target should remain after wildcard cleanup"
+        );
     }
 }

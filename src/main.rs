@@ -175,10 +175,10 @@ fn main() -> Result<()> {
     };
 
     let mut stdout = std::io::stdout().lock();
-    if let Err(e) = stdout.write_all(output.as_bytes()) {
-        if e.kind() != std::io::ErrorKind::BrokenPipe {
-            return Err(e.into());
-        }
+    if let Err(e) = stdout.write_all(output.as_bytes())
+        && e.kind() != std::io::ErrorKind::BrokenPipe
+    {
+        return Err(e.into());
     }
     Ok(())
 }

@@ -1040,7 +1040,6 @@ fn test_expand_unknowns_scoped_by_concrete_resolution() {
 
 /// Helper: check that at most `max_count` distinct uses targets exist for a node.
 /// Used to verify that wildcard expansion does not globally fan out.
-
 /// INV-2 precision: the number of *concrete* (namespaced) `do_work` uses from
 /// `precision_caller` must be exactly 1 (WorkerA only), not more.
 /// Wildcards (*.do_work) are expected from the bare `do_work()` call and are

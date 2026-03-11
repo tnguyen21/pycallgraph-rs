@@ -1,3 +1,4 @@
+.DS_Store
 /target
 
 # Local reference clones and corpora — populated by scripts/bootstrap-corpora.sh
@@ -8,8 +9,8 @@
 /benchmarks/corpora/
 
 # Generated local benchmark outputs
-/benchmarks/results/*.json
-/benchmarks/results/**/*.json
+/benchmarks/.venv/
+/benchmarks/results/
 
 # Generated report output
 /report/
@@ -25,6 +26,3 @@
 
 # Generated SVGs
 *.svg
-
-# Benchmarks directory
-/benchmarks/

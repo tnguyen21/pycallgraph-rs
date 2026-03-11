@@ -86,14 +86,12 @@ impl super::AnalysisSession {
                                 // name is intentionally unexported; an unresolved call
                                 // to it must not be attributed to the module's private
                                 // implementation.
-                                if !ns.is_empty() {
-                                    if let Some(scope) = self.scopes.get(ns) {
-                                        if let Some(ref exports) = scope.all_exports.clone() {
-                                            if !exports.contains(&name) {
-                                                continue;
-                                            }
-                                        }
-                                    }
+                                if !ns.is_empty()
+                                    && let Some(scope) = self.scopes.get(ns)
+                                    && let Some(ref exports) = scope.all_exports
+                                    && !exports.contains(&name)
+                                {
+                                    continue;
                                 }
                                 new_uses.push((from, candidate));
                             }

@@ -41,10 +41,10 @@ pub(crate) fn make_call_graph(dir: &std::path::Path) -> CallGraph {
 pub(crate) fn find_nodes_by_name(cg: &CallGraph, name: &str) -> Vec<usize> {
     let mut result: Vec<usize> = cg.nodes_by_name.get(name).cloned().unwrap_or_default();
     for (idx, node) in cg.nodes_arena.iter().enumerate() {
-        if node.get_name() == name || node.get_name().ends_with(&format!(".{name}")) {
-            if !result.contains(&idx) {
-                result.push(idx);
-            }
+        if (node.get_name() == name || node.get_name().ends_with(&format!(".{name}")))
+            && !result.contains(&idx)
+        {
+            result.push(idx);
         }
     }
     result
@@ -132,7 +132,7 @@ pub(crate) fn make_fixture_graph(fixture: &str) -> CallGraph {
         .join("test_code")
         .join(fixture);
     let files = vec![file.to_string_lossy().to_string()];
-    CallGraph::new(&files, None).expect(&format!("should parse {fixture}"))
+    CallGraph::new(&files, None).unwrap_or_else(|_| panic!("should parse {fixture}"))
 }
 
 pub(crate) fn make_fixture_dir_graph(subdir: &str) -> CallGraph {
@@ -142,7 +142,7 @@ pub(crate) fn make_fixture_dir_graph(subdir: &str) -> CallGraph {
         .join(subdir);
     let files = collect_py_files(&dir);
     let root = dir.parent().unwrap().to_string_lossy().to_string();
-    CallGraph::new(&files, Some(&root)).expect(&format!("should parse {subdir}"))
+    CallGraph::new(&files, Some(&root)).unwrap_or_else(|_| panic!("should parse {subdir}"))
 }
 
 pub(crate) fn make_single_fixture_graph(fixture_name: &str) -> CallGraph {

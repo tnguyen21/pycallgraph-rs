@@ -29,24 +29,19 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        uses: Swatinem/rust-cache@v2
+
+      - name: Count tests
+        id: test_count
+        run: |
+          count=$(cargo test --all-targets -- --list | grep -c ': test$')
+          echo "count=$count" >> "$GITHUB_OUTPUT"
 
       - name: Build release binary
         run: cargo build --release
 
       - name: Run tests
-        id: tests
-        run: |
-          output=$(cargo test 2>&1)
-          count=$(echo "$output" | grep -oP '\d+(?= passed)' | tail -1)
-          echo "count=$count" >> "$GITHUB_OUTPUT"
-          echo "$output"
+        run: cargo test --all-targets
 
       - name: Bootstrap corpora
         run: ./scripts/bootstrap-corpora.sh --only-corpora
@@ -62,7 +57,7 @@ jobs:
             --pycg ./target/release/pycg \
             --corpora benchmarks/corpora \
             --out report/index.html \
-            --test-count "${{ steps.tests.outputs.count }}" \
+            --test-count "${{ steps.test_count.outputs.count }}" \
             --commit "${{ github.sha }}"
 
       - name: Upload pages artifact
