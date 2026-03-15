@@ -15,6 +15,8 @@ impl std::fmt::Debug for SymId {
 pub struct Interner {
     map: FxHashMap<String, SymId>,
     vec: Vec<String>,
+    /// Reusable scratch buffer for `intern_join` to avoid per-call allocation.
+    join_buf: String,
 }
 
 impl Interner {
@@ -22,6 +24,7 @@ impl Interner {
         Self {
             map: FxHashMap::default(),
             vec: Vec::new(),
+            join_buf: String::new(),
         }
     }
 
@@ -32,8 +35,27 @@ impl Interner {
             return id;
         }
         let id = SymId(self.vec.len() as u32);
-        self.vec.push(s.to_owned());
-        self.map.insert(s.to_owned(), id);
+        let owned = s.to_owned();
+        self.map.insert(owned.clone(), id);
+        self.vec.push(owned);
+        id
+    }
+
+    /// Intern the concatenation `"{a}.{b}"` without allocating a temporary
+    /// String on every call. Uses an internal scratch buffer.
+    pub fn intern_join(&mut self, a: SymId, b: SymId) -> SymId {
+        self.join_buf.clear();
+        self.join_buf.push_str(&self.vec[a.0 as usize]);
+        self.join_buf.push('.');
+        self.join_buf.push_str(&self.vec[b.0 as usize]);
+        // Inline the intern logic to avoid borrow conflict with self.join_buf.
+        if let Some(&id) = self.map.get(self.join_buf.as_str()) {
+            return id;
+        }
+        let id = SymId(self.vec.len() as u32);
+        let owned = self.join_buf.clone();
+        self.map.insert(owned.clone(), id);
+        self.vec.push(owned);
         id
     }
 

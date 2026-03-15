@@ -1629,11 +1629,9 @@ impl AnalysisSession {
     }
 
     fn visit_lambda(&mut self, node: &ExprLambda, line_index: &LineIndex) -> Option<NodeId> {
-        let label = "lambda";
         let parent_fqn = *self.fqn_cache.last().unwrap();
-        let parent_ns = self.graph.interner.resolve(parent_fqn).to_owned();
-        let inner_ns = format!("{parent_ns}.{label}");
-        let inner_ns_sym = self.graph.interner.intern(&inner_ns);
+        let label_sym = self.graph.interner.intern("lambda");
+        let inner_ns_sym = self.graph.interner.intern_join(parent_fqn, label_sym);
 
         // Ensure scope exists
         if !self.scopes.contains_key(&inner_ns_sym) {
@@ -1668,11 +1666,11 @@ impl AnalysisSession {
             self.scopes.insert(inner_ns_sym, scope);
         }
 
-        let label_sym = self.graph.interner.intern(label);
         self.push_name(label_sym);
         self.scope_stack.push(inner_ns_sym);
-        self.context_stack.push(label.to_string());
+        self.context_stack.push("lambda".to_string());
 
+        let inner_ns = self.graph.interner.resolve(inner_ns_sym).to_owned();
         if let Some(ref params) = node.parameters {
             self.generate_args_nodes(params, &inner_ns);
             self.analyze_arguments(params, line_index);
@@ -1686,7 +1684,7 @@ impl AnalysisSession {
         // Add defines edge for the lambda
         let from_node = self.get_node_of_current_namespace();
         let from_name = self.graph.nodes_arena[from_node].get_name(&self.graph.interner).to_owned();
-        let to_node = self.get_node(Some(&from_name), label, Flavor::Namespace);
+        let to_node = self.get_node(Some(&from_name), "lambda", Flavor::Namespace);
         self.add_defines_edge(from_node, Some(to_node));
 
         Some(to_node)
@@ -1807,9 +1805,8 @@ impl AnalysisSession {
 
         // Ensure comprehension scope exists
         let parent_fqn = *self.fqn_cache.last().unwrap();
-        let parent_ns = self.graph.interner.resolve(parent_fqn).to_owned();
-        let inner_ns = format!("{parent_ns}.{label}");
-        let inner_ns_sym = self.graph.interner.intern(&inner_ns);
+        let label_sym = self.graph.interner.intern(label);
+        let inner_ns_sym = self.graph.interner.intern_join(parent_fqn, label_sym);
         if !self.scopes.contains_key(&inner_ns_sym) {
             let mut target_names = FxHashSet::default();
             for comp in generators {
@@ -1825,7 +1822,6 @@ impl AnalysisSession {
         }
 
         // Enter inner scope
-        let label_sym = self.graph.interner.intern(label);
         self.push_name(label_sym);
         self.scope_stack.push(inner_ns_sym);
         self.context_stack.push(label.to_string());

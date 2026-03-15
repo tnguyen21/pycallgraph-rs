@@ -57,10 +57,8 @@ impl AnalysisSession {
 
         let fqn_sym = match ns_sym {
             Some(ns) => {
-                let ns_str = self.graph.interner.resolve(ns);
-                if !ns_str.is_empty() {
-                    let fqn = format!("{ns_str}.{name}");
-                    self.graph.interner.intern(&fqn)
+                if !self.graph.interner.resolve(ns).is_empty() {
+                    self.graph.interner.intern_join(ns, name_sym)
                 } else {
                     name_sym
                 }
@@ -89,10 +87,7 @@ impl AnalysisSession {
             name
         } else {
             let prev_fqn = *self.fqn_cache.last().unwrap();
-            let prev_str = self.graph.interner.resolve(prev_fqn);
-            let name_str = self.graph.interner.resolve(name);
-            let joined = format!("{prev_str}.{name_str}");
-            self.graph.interner.intern(&joined)
+            self.graph.interner.intern_join(prev_fqn, name)
         };
         self.fqn_cache.push(fqn);
     }
@@ -134,11 +129,8 @@ impl AnalysisSession {
 
         let fqn = match namespace {
             Some(ns) => {
-                let ns_str = self.graph.interner.resolve(ns);
-                if !ns_str.is_empty() {
-                    let name_str = self.graph.interner.resolve(name);
-                    let fqn_str = format!("{ns_str}.{name_str}");
-                    self.graph.interner.intern(&fqn_str)
+                if !self.graph.interner.resolve(ns).is_empty() {
+                    self.graph.interner.intern_join(ns, name)
                 } else {
                     name
                 }
