@@ -33,6 +33,8 @@ impl AnalysisSession {
                 diagnostics: AnalysisDiagnostics::default(),
                 module_to_filename,
             },
+            defines_edges: Vec::new(),
+            uses_edges: Vec::new(),
             node_ids_by_key: FxHashMap::default(),
             wild_edge_index: FxHashMap::default(),
             scopes: FxHashMap::default(),
@@ -53,7 +55,17 @@ impl AnalysisSession {
         }
     }
 
-    pub(super) fn into_call_graph(self) -> CallGraph {
+    pub(super) fn into_call_graph(mut self) -> CallGraph {
+        self.graph.defines_edges = self
+            .defines_edges
+            .into_iter()
+            .map(CompactEdgeSet::from)
+            .collect();
+        self.graph.uses_edges = self
+            .uses_edges
+            .into_iter()
+            .map(CompactEdgeSet::from)
+            .collect();
         self.graph
     }
 

@@ -4,6 +4,7 @@
 //! TGF (Trivial Graph Format), plain text, and JSON.
 
 use crate::analyzer::AnalysisDiagnostics;
+use crate::compact_edges::CompactEdgeSet;
 use crate::intern::Interner;
 use crate::node::{Node, NodeId};
 use crate::visgraph::{VisualGraph, VisualNode};
@@ -453,7 +454,7 @@ fn diagnostic_location(
 fn build_json_diagnostics(
     nodes_arena: &[Node],
     defined: &FxHashSet<NodeId>,
-    uses_edges: &[FxHashSet<NodeId>],
+    uses_edges: &[CompactEdgeSet],
     node_ids: &FxHashMap<NodeId, String>,
     analyzer_diagnostics: &AnalysisDiagnostics,
     graph_mode: &JsonGraphMode,
@@ -681,8 +682,8 @@ fn build_json_diagnostics(
 pub fn write_json(
     nodes_arena: &[Node],
     defined: &FxHashSet<NodeId>,
-    defines_edges: &[FxHashSet<NodeId>],
-    uses_edges: &[FxHashSet<NodeId>],
+    defines_edges: &[CompactEdgeSet],
+    uses_edges: &[CompactEdgeSet],
     analyzer_diagnostics: &AnalysisDiagnostics,
     options: &JsonOutputOptions<'_>,
     interner: &Interner,
@@ -839,9 +840,10 @@ pub fn write_json(
 mod tests {
     use super::*;
     use crate::intern::Interner;
+    use crate::compact_edges::CompactEdgeSet;
     use crate::node::{Flavor, Node};
     use crate::visgraph::VisualOptions;
-    use crate::{FxHashMap, FxHashSet};
+    use crate::FxHashSet;
 
     fn make_test_graph() -> VisualGraph {
         let mut interner = Interner::new();
@@ -866,12 +868,18 @@ mod tests {
         defined.insert(1);
         defined.insert(2);
 
-        let mut uses = vec![FxHashSet::default(); 3];
-        uses[0].insert(1);
-        uses[1].insert(2);
+        let uses: Vec<CompactEdgeSet> = {
+            let mut u = vec![FxHashSet::default(); 3];
+            u[0].insert(1);
+            u[1].insert(2);
+            u.into_iter().map(CompactEdgeSet::from).collect()
+        };
 
-        let mut defines = vec![FxHashSet::default(); 3];
-        defines[0].insert(1);
+        let defines: Vec<CompactEdgeSet> = {
+            let mut d = vec![FxHashSet::default(); 3];
+            d[0].insert(1);
+            d.into_iter().map(CompactEdgeSet::from).collect()
+        };
 
         let options = VisualOptions {
             draw_defines: true,

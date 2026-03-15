@@ -1,3 +1,4 @@
+use crate::compact_edges::CompactEdgeSet;
 use crate::intern::SymId;
 use crate::{FxHashMap, FxHashSet};
 
@@ -26,8 +27,8 @@ impl super::AnalysisSession {
         let mut concrete_uses_pairs: FxHashSet<(NodeId, super::SymId)> = FxHashSet::default();
         for (from, targets) in self.uses_edges.iter().enumerate() {
             for &to in targets {
-                if self.nodes_arena[to].namespace.is_some() {
-                    concrete_uses_pairs.insert((from, self.nodes_arena[to].name));
+                if self.graph.nodes_arena[to].namespace.is_some() {
+                    concrete_uses_pairs.insert((from, self.graph.nodes_arena[to].name));
                 }
             }
         }
@@ -36,11 +37,11 @@ impl super::AnalysisSession {
         let mut new_defines: Vec<(NodeId, NodeId)> = Vec::new();
         for (from, targets) in self.defines_edges.iter().enumerate() {
             for &to in targets {
-                if self.nodes_arena[to].namespace.is_none() {
-                    let name_sym = self.nodes_arena[to].name;
-                    if let Some(ids) = self.nodes_by_name.get(&name_sym) {
+                if self.graph.nodes_arena[to].namespace.is_none() {
+                    let name_sym = self.graph.nodes_arena[to].name;
+                    if let Some(ids) = self.graph.nodes_by_name.get(&name_sym) {
                         for &candidate in ids {
-                            if self.nodes_arena[candidate].namespace.is_some() {
+                            if self.graph.nodes_arena[candidate].namespace.is_some() {
                                 new_defines.push((from, candidate));
                             }
                         }
@@ -56,8 +57,8 @@ impl super::AnalysisSession {
         let mut new_uses: Vec<(NodeId, NodeId)> = Vec::new();
         for (from, targets) in self.uses_edges.iter().enumerate() {
             for &to in targets {
-                if self.nodes_arena[to].namespace.is_none() {
-                    let name_sym = self.nodes_arena[to].name;
+                if self.graph.nodes_arena[to].namespace.is_none() {
+                    let name_sym = self.graph.nodes_arena[to].name;
                     let name_str = self.graph.interner.resolve(name_sym);
                     if name_str.starts_with('_') {
                         continue;
@@ -65,9 +66,9 @@ impl super::AnalysisSession {
                     if concrete_uses_pairs.contains(&(from, name_sym)) {
                         continue;
                     }
-                    if let Some(ids) = self.nodes_by_name.get(&name_sym) {
+                    if let Some(ids) = self.graph.nodes_by_name.get(&name_sym) {
                         for &candidate in ids {
-                            if let Some(ns_sym) = self.nodes_arena[candidate].namespace {
+                            if let Some(ns_sym) = self.graph.nodes_arena[candidate].namespace {
                                 let ns_str = self.graph.interner.resolve(ns_sym);
                                 if !ns_str.is_empty() {
                                     if let Some(scope) = self.scopes.get(&ns_sym)
@@ -90,13 +91,13 @@ impl super::AnalysisSession {
 
         // Mark all unknown nodes as not defined
         let unknown_ids: Vec<NodeId> = self
-            .nodes_by_name
+            .graph.nodes_by_name
             .values()
             .flat_map(|ids| ids.iter().copied())
-            .filter(|&id| self.nodes_arena[id].namespace.is_none())
+            .filter(|&id| self.graph.nodes_arena[id].namespace.is_none())
             .collect();
         for id in unknown_ids {
-            self.defined.remove(&id);
+            self.graph.defined.remove(&id);
         }
     }
 
@@ -104,11 +105,11 @@ impl super::AnalysisSession {
     fn resolve_imports(&mut self) {
         // Find all imported item nodes
         let import_nodes: Vec<NodeId> = self
-            .nodes_by_name
+            .graph.nodes_by_name
             .values()
             .flat_map(|ids| ids.iter())
             .copied()
-            .filter(|&id| self.nodes_arena[id].flavor == Flavor::ImportedItem)
+            .filter(|&id| self.graph.nodes_arena[id].flavor == Flavor::ImportedItem)
             .collect();
 
         let mut import_mapping: FxHashMap<NodeId, NodeId> = FxHashMap::default();
@@ -120,14 +121,14 @@ impl super::AnalysisSession {
             }
 
             let mod_name = {
-                let ns_sym = self.nodes_arena[from_id].namespace;
+                let ns_sym = self.graph.nodes_arena[from_id].namespace;
                 match ns_sym {
                     Some(s) => self.graph.interner.resolve(s).to_owned(),
                     None => String::new(),
                 }
             };
             let item_name = {
-                let name_sym = self.nodes_arena[from_id].name;
+                let name_sym = self.graph.nodes_arena[from_id].name;
                 self.graph.interner.resolve(name_sym).to_owned()
             };
 
@@ -139,12 +140,12 @@ impl super::AnalysisSession {
             if !scope_vals.is_empty() {
                 let best = scope_vals
                     .iter()
-                    .find(|&&id| self.nodes_arena[id].flavor != Flavor::ImportedItem)
+                    .find(|&&id| self.graph.nodes_arena[id].flavor != Flavor::ImportedItem)
                     .or_else(|| scope_vals.first())
                     .copied();
                 if let Some(target) = best {
                     import_mapping.insert(from_id, target);
-                    if self.nodes_arena[target].flavor == Flavor::ImportedItem && target != from_id
+                    if self.graph.nodes_arena[target].flavor == Flavor::ImportedItem && target != from_id
                     {
                         to_resolve.push(target);
                     }
@@ -162,7 +163,7 @@ impl super::AnalysisSession {
 
             // Resolve namespace
             let module_id = {
-                let ns_sym = self.nodes_arena[to_id].namespace;
+                let ns_sym = self.graph.nodes_arena[to_id].namespace;
                 let ns_str = ns_sym
                     .map(|s| self.graph.interner.resolve(s))
                     .unwrap_or("");
@@ -178,11 +179,11 @@ impl super::AnalysisSession {
 
             let module_uses = self.uses_edges[module_id].clone();
             if !module_uses.is_empty() {
-                let from_name = self.nodes_arena[from_id].name;
+                let from_name = self.graph.nodes_arena[from_id].name;
                 for candidate in &module_uses {
-                    if self.nodes_arena[*candidate].name == from_name {
+                    if self.graph.nodes_arena[*candidate].name == from_name {
                         import_mapping.insert(from_id, *candidate);
-                        if self.nodes_arena[*candidate].flavor == Flavor::ImportedItem
+                        if self.graph.nodes_arena[*candidate].flavor == Flavor::ImportedItem
                             && *candidate != from_id
                         {
                             to_resolve.push(*candidate);
@@ -197,7 +198,7 @@ impl super::AnalysisSession {
         if !import_mapping.is_empty() {
             let remap = |id: NodeId| -> NodeId { *import_mapping.get(&id).unwrap_or(&id) };
 
-            let num_nodes = self.nodes_arena.len();
+            let num_nodes = self.graph.nodes_arena.len();
             let old_uses = std::mem::take(&mut self.uses_edges);
             self.uses_edges.resize_with(num_nodes, Default::default);
             for (from, targets) in old_uses.into_iter().enumerate() {
@@ -224,7 +225,7 @@ impl super::AnalysisSession {
                 }
             }
 
-            for ids in self.nodes_by_name.values_mut() {
+            for ids in self.graph.nodes_by_name.values_mut() {
                 for id in ids.iter_mut() {
                     if let Some(&mapped) = import_mapping.get(id) {
                         *id = mapped;
@@ -240,25 +241,25 @@ impl super::AnalysisSession {
 
         for (from, targets) in self.uses_edges.iter().enumerate() {
             for &to in targets {
-                if self.nodes_arena[to].namespace.is_some() && !self.defined.contains(&to) {
+                if self.graph.nodes_arena[to].namespace.is_some() && !self.graph.defined.contains(&to) {
                     to_contract.push((from, to));
                 }
             }
         }
 
         for (from, to) in to_contract {
-            let external_kind = match self.nodes_arena[to].flavor {
+            let external_kind = match self.graph.nodes_arena[to].flavor {
                 Flavor::ImportedItem => Some(super::ExternalReferenceKind::Import),
                 Flavor::Module => Some(super::ExternalReferenceKind::Module),
                 _ => None,
             };
             if let Some(kind) = external_kind {
-                let canonical = self.nodes_arena[to].get_name(&self.graph.interner).to_string();
+                let canonical = self.graph.nodes_arena[to].get_name(&self.graph.interner).to_string();
                 self.record_external_reference(from, kind, canonical);
             }
-            let name_str = self.graph.interner.resolve(self.nodes_arena[to].name).to_owned();
+            let name_str = self.graph.interner.resolve(self.graph.nodes_arena[to].name).to_owned();
             let wild_id = self.get_node(None, &name_str, Flavor::Unknown);
-            self.defined.remove(&wild_id);
+            self.graph.defined.remove(&wild_id);
             self.add_uses_edge(from, wild_id);
             self.remove_uses_edge(from, to);
         }
@@ -287,7 +288,7 @@ impl super::AnalysisSession {
             // Group targets by short name, keeping only namespaced nodes.
             by_name.clear();
             for &to in targets {
-                let node = &self.nodes_arena[to];
+                let node = &self.graph.nodes_arena[to];
                 if node.namespace.is_some() {
                     by_name.entry(node.name).or_default().push(to);
                 }
@@ -299,12 +300,12 @@ impl super::AnalysisSession {
                     continue;
                 }
                 for &to in bucket {
-                    let to_ns = self.nodes_arena[to].namespace;
+                    let to_ns = self.graph.nodes_arena[to].namespace;
                     for &other in bucket {
                         if other == to {
                             continue;
                         }
-                        let other_ns = self.nodes_arena[other].namespace;
+                        let other_ns = self.graph.nodes_arena[other].namespace;
                         if to_ns != other_ns {
                             let parent_to = self.get_parent_node(to);
                             let parent_other = self.get_parent_node(other);
@@ -330,7 +331,7 @@ impl super::AnalysisSession {
 
         for label in &inner_labels {
             let label_sym = self.graph.interner.intern(label);
-            if let Some(ids) = self.nodes_by_name.get(&label_sym).cloned() {
+            if let Some(ids) = self.graph.nodes_by_name.get(&label_sym).cloned() {
                 for id in ids {
                     let parent_id = self.get_parent_node(id);
 
@@ -341,7 +342,7 @@ impl super::AnalysisSession {
                         }
                     }
 
-                    self.defined.remove(&id);
+                    self.graph.defined.remove(&id);
                 }
             }
         }
@@ -352,7 +353,7 @@ impl super::CallGraph {
     /// Derive a module-level dependency graph.
     pub fn derive_module_graph(
         &mut self,
-    ) -> (Vec<Node>, Vec<FxHashSet<NodeId>>, FxHashSet<NodeId>) {
+    ) -> (Vec<Node>, Vec<CompactEdgeSet>, FxHashSet<NodeId>) {
         // Build filename_sym -> module_name_sym mapping (all SymIds, no allocs).
         let filename_to_module: FxHashMap<SymId, SymId> = self
             .module_to_filename
@@ -431,7 +432,11 @@ impl super::CallGraph {
         // Ensure module_edges covers all nodes.
         module_edges.resize_with(new_nodes.len(), Default::default);
         let defined: FxHashSet<NodeId> = (0..new_nodes.len()).collect();
-        (new_nodes, module_edges, defined)
+        let compact_module_edges = module_edges
+            .into_iter()
+            .map(CompactEdgeSet::from)
+            .collect();
+        (new_nodes, compact_module_edges, defined)
     }
 }
 
@@ -460,7 +465,7 @@ mod tests {
             "wildcard edge should be replaced by concrete candidates",
         );
         assert!(
-            !session.defined.contains(&unknown),
+            !session.graph.defined.contains(&unknown),
             "wildcard nodes should be marked undefined after expansion",
         );
     }

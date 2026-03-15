@@ -21,8 +21,8 @@ use mro::resolve_mro;
 pub use util::get_module_name;
 use util::{collect_target_names_from_expr, get_ast_node_name, literal_key_from_expr};
 
+use crate::compact_edges::CompactEdgeSet;
 use crate::{FxHashMap, FxHashSet};
-use std::ops::{Deref, DerefMut};
 
 use anyhow::{Context, Result};
 use log::{debug, info};
@@ -243,9 +243,9 @@ pub struct CallGraph {
     /// namespaces).
     pub nodes_by_name: FxHashMap<SymId, Vec<NodeId>>,
 
-    // Edges -------------------------------------------------------------
-    pub defines_edges: Vec<FxHashSet<NodeId>>,
-    pub uses_edges: Vec<FxHashSet<NodeId>>,
+    // Edges (compacted after postprocessing — read-only) -----------------
+    pub defines_edges: Vec<CompactEdgeSet>,
+    pub uses_edges: Vec<CompactEdgeSet>,
 
     /// Which nodes have been marked *defined* (have a defines edge from
     /// them, or were created as wildcard nodes).
@@ -265,6 +265,11 @@ pub struct CallGraph {
 #[derive(Debug)]
 pub(super) struct AnalysisSession {
     pub(super) graph: CallGraph,
+
+    // Mutable edges (compacted into CallGraph on into_call_graph) ----------
+    pub(super) defines_edges: Vec<FxHashSet<NodeId>>,
+    pub(super) uses_edges: Vec<FxHashSet<NodeId>>,
+
     node_ids_by_key: FxHashMap<NodeKey, NodeId>,
     /// Index: (from_id, name_sym) -> wild_node_id for O(1) wildcard lookup.
     wild_edge_index: FxHashMap<(NodeId, SymId), NodeId>,
@@ -328,19 +333,6 @@ struct NodeKey {
     name: SymId,
 }
 
-impl Deref for AnalysisSession {
-    type Target = CallGraph;
-
-    fn deref(&self) -> &Self::Target {
-        &self.graph
-    }
-}
-
-impl DerefMut for AnalysisSession {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.graph
-    }
-}
 
 impl AnalysisSession {
     // =====================================================================
@@ -401,8 +393,8 @@ impl AnalysisSession {
                     // they don't carry useful type information.
                     let sentinel = self.graph.interner.intern("^^^argument^^^");
                     for ret_id in ret_ids {
-                        let is_sentinel = self.nodes_arena[ret_id].name == sentinel;
-                        let is_unknown = self.nodes_arena[ret_id].namespace.is_none();
+                        let is_sentinel = self.graph.nodes_arena[ret_id].name == sentinel;
+                        let is_unknown = self.graph.nodes_arena[ret_id].namespace.is_none();
                         if !is_sentinel && !is_unknown {
                             let fn_node = self.get_node_of_current_namespace();
                             self.record_function_return(fn_node, ret_id);
@@ -450,13 +442,13 @@ impl AnalysisSession {
         );
 
         let from_node = self.get_node_of_current_namespace();
-        let ns = self.nodes_arena[from_node].get_name(&self.graph.interner).to_owned();
+        let ns = self.graph.nodes_arena[from_node].get_name(&self.graph.interner).to_owned();
         let to_node = self.get_node(Some(&ns), &class_name, Flavor::Class);
         if self.add_defines_edge(from_node, Some(to_node)) {
             info!(
                 "Def from {} to Class {}",
-                self.nodes_arena[from_node].get_name(&self.graph.interner),
-                self.nodes_arena[to_node].get_name(&self.graph.interner)
+                self.graph.nodes_arena[from_node].get_name(&self.graph.interner),
+                self.graph.nodes_arena[to_node].get_name(&self.graph.interner)
             );
         }
 
@@ -530,13 +522,13 @@ impl AnalysisSession {
         let (self_name, flavor, deco_ids) = self.analyze_function_def(node, line_index);
 
         let from_node = self.get_node_of_current_namespace();
-        let ns = self.nodes_arena[from_node].get_name(&self.graph.interner).to_owned();
+        let ns = self.graph.nodes_arena[from_node].get_name(&self.graph.interner).to_owned();
         let to_node = self.get_node(Some(&ns), &func_name, flavor);
         if self.add_defines_edge(from_node, Some(to_node)) {
             info!(
                 "Def from {} to Function {}",
-                self.nodes_arena[from_node].get_name(&self.graph.interner),
-                self.nodes_arena[to_node].get_name(&self.graph.interner)
+                self.graph.nodes_arena[from_node].get_name(&self.graph.interner),
+                self.graph.nodes_arena[to_node].get_name(&self.graph.interner)
             );
         }
 
@@ -547,12 +539,12 @@ impl AnalysisSession {
         // Decorator-chain call flow: each concrete (non-wildcard) decorator receives
         // the function as its argument, so emit decorator -> function uses edges.
         for &deco_id in &deco_ids {
-            if self.nodes_arena[deco_id].namespace.is_some() && self.add_uses_edge(deco_id, to_node)
+            if self.graph.nodes_arena[deco_id].namespace.is_some() && self.add_uses_edge(deco_id, to_node)
             {
                 info!(
                     "New edge added: decorator {} uses function {}",
-                    self.nodes_arena[deco_id].get_name(&self.graph.interner),
-                    self.nodes_arena[to_node].get_name(&self.graph.interner)
+                    self.graph.nodes_arena[deco_id].get_name(&self.graph.interner),
+                    self.graph.nodes_arena[to_node].get_name(&self.graph.interner)
                 );
             }
         }
@@ -580,7 +572,7 @@ impl AnalysisSession {
             info!(
                 "Method def: setting self name \"{}\" to {}",
                 sname,
-                self.nodes_arena[class_id].get_name(&self.graph.interner)
+                self.graph.nodes_arena[class_id].get_name(&self.graph.interner)
             );
         }
 
@@ -635,7 +627,7 @@ impl AnalysisSession {
         for deco in &node.decorator_list {
             let deco_node = self.visit_expr(&deco.expression, line_index);
             if let Some(did) = deco_node {
-                deco_name_syms.push(self.nodes_arena[did].name);
+                deco_name_syms.push(self.graph.nodes_arena[did].name);
                 deco_ids.push(did);
             }
         }
@@ -822,7 +814,7 @@ impl AnalysisSession {
             // Check if the import is a sub-module.
             let full_name = format!("{tgt_name}.{item_name}");
             let full_name_sym = self.graph.interner.intern(&full_name);
-            if self.module_to_filename.contains_key(&full_name_sym) {
+            if self.graph.module_to_filename.contains_key(&full_name_sym) {
                 let mod_node = self.get_node(Some(""), &full_name, Flavor::Module);
                 self.set_value(&alias_name, Some(mod_node));
                 self.add_uses_edge(from_node, mod_node);
@@ -840,7 +832,7 @@ impl AnalysisSession {
                     debug!(
                         "Import scope-resolved: {} -> {}",
                         alias_name,
-                        self.nodes_arena[id].get_name(&self.graph.interner)
+                        self.graph.nodes_arena[id].get_name(&self.graph.interner)
                     );
                 }
                 continue;
@@ -853,8 +845,8 @@ impl AnalysisSession {
             if self.add_uses_edge(from_node, to_node) {
                 info!(
                     "New edge added for Use from {} to ImportFrom {}",
-                    self.nodes_arena[from_node].get_name(&self.graph.interner),
-                    self.nodes_arena[to_node].get_name(&self.graph.interner)
+                    self.graph.nodes_arena[from_node].get_name(&self.graph.interner),
+                    self.graph.nodes_arena[to_node].get_name(&self.graph.interner)
                 );
             }
         }
@@ -905,7 +897,7 @@ impl AnalysisSession {
                 debug!(
                     "Star-import: {} -> {}",
                     name_str,
-                    self.nodes_arena[id].get_name(&self.graph.interner)
+                    self.graph.nodes_arena[id].get_name(&self.graph.interner)
                 );
             }
         }
@@ -1266,7 +1258,7 @@ impl AnalysisSession {
         if let Expr::Name(ref name_expr) = *node.name {
             let alias_name = name_expr.id.to_string();
             let from_node = self.get_node_of_current_namespace();
-            let ns = self.nodes_arena[from_node].get_name(&self.graph.interner).to_owned();
+            let ns = self.graph.nodes_arena[from_node].get_name(&self.graph.interner).to_owned();
             let to_node = self.get_node(Some(&ns), &alias_name, Flavor::Name);
             self.add_defines_edge(from_node, Some(to_node));
             let line = line_index.line_index(node.range().start()).get();
@@ -1428,8 +1420,8 @@ impl AnalysisSession {
                 if self.add_uses_edge(from_node, to_id) {
                     info!(
                         "New edge added for Use from {} to Name {} (wildcard)",
-                        self.nodes_arena[from_node].get_name(&self.graph.interner),
-                        self.nodes_arena[to_id].get_name(&self.graph.interner)
+                        self.graph.nodes_arena[from_node].get_name(&self.graph.interner),
+                        self.graph.nodes_arena[to_id].get_name(&self.graph.interner)
                     );
                 }
                 return Some(to_id);
@@ -1451,8 +1443,8 @@ impl AnalysisSession {
                 if self.add_uses_edge(from_node, to) {
                     info!(
                         "New edge added for Use from {} to Name {}",
-                        self.nodes_arena[from_node].get_name(&self.graph.interner),
-                        self.nodes_arena[to].get_name(&self.graph.interner)
+                        self.graph.nodes_arena[from_node].get_name(&self.graph.interner),
+                        self.graph.nodes_arena[to].get_name(&self.graph.interner)
                     );
                 }
                 if first.is_none() {
@@ -1480,16 +1472,16 @@ impl AnalysisSession {
                 let mut found_any = false;
 
                 for &obj_id in &obj_ids {
-                    if self.nodes_arena[obj_id].namespace.is_none() {
+                    if self.graph.nodes_arena[obj_id].namespace.is_none() {
                         continue; // skip wildcards as objects
                     }
-                    let ns = self.nodes_arena[obj_id].get_name(&self.graph.interner).to_owned();
+                    let ns = self.graph.nodes_arena[obj_id].get_name(&self.graph.interner).to_owned();
 
                     // Direct lookup in the object's scope, then MRO.
                     let attr_result = self.lookup_in_scope(&ns, &attr_name).or_else(|| {
                         if let Some(mro) = self.mro.get(&obj_id) {
                             return mro.iter().skip(1).find_map(|&base_id| {
-                                let base_ns = self.nodes_arena[base_id].get_name(&self.graph.interner).to_owned();
+                                let base_ns = self.graph.nodes_arena[base_id].get_name(&self.graph.interner).to_owned();
                                 self.lookup_in_scope(&base_ns, &attr_name)
                             });
                         }
@@ -1501,11 +1493,11 @@ impl AnalysisSession {
                         if self.add_uses_edge(from_node, attr_id) {
                             info!(
                                 "New edge added for Use from {} to {} (multi-value attr)",
-                                self.nodes_arena[from_node].get_name(&self.graph.interner),
-                                self.nodes_arena[attr_id].get_name(&self.graph.interner)
+                                self.graph.nodes_arena[from_node].get_name(&self.graph.interner),
+                                self.graph.nodes_arena[attr_id].get_name(&self.graph.interner)
                             );
                         }
-                        let attr_ns = self.nodes_arena[attr_id].namespace;
+                        let attr_ns = self.graph.nodes_arena[attr_id].namespace;
                         if attr_ns.is_some() {
                             let attr_name_sym = self.graph.interner.intern(&attr_name);
                             self.remove_wild(from_node, attr_id, attr_name_sym);
@@ -1561,8 +1553,8 @@ impl AnalysisSession {
             if self.add_uses_edge(from_node, result_id) {
                 info!(
                     "New edge added for Use from {} to {} (via resolved call)",
-                    self.nodes_arena[from_node].get_name(&self.graph.interner),
-                    self.nodes_arena[result_id].get_name(&self.graph.interner)
+                    self.graph.nodes_arena[from_node].get_name(&self.graph.interner),
+                    self.graph.nodes_arena[result_id].get_name(&self.graph.interner)
                 );
             }
             return Some(result_id);
@@ -1577,13 +1569,13 @@ impl AnalysisSession {
             && self.class_base_ast_info.contains_key(&func_id)
         {
             let from_node = self.get_node_of_current_namespace();
-            let func_name = self.nodes_arena[func_id].get_name(&self.graph.interner).to_owned();
+            let func_name = self.graph.nodes_arena[func_id].get_name(&self.graph.interner).to_owned();
             let init_node = self.get_node(Some(&func_name), "__init__", Flavor::Method);
             if self.add_uses_edge(from_node, init_node) {
                 info!(
                     "New edge added for Use from {} to {} (class instantiation)",
-                    self.nodes_arena[from_node].get_name(&self.graph.interner),
-                    self.nodes_arena[init_node].get_name(&self.graph.interner)
+                    self.graph.nodes_arena[from_node].get_name(&self.graph.interner),
+                    self.graph.nodes_arena[init_node].get_name(&self.graph.interner)
                 );
             }
             return func_node; // class node == instance type
@@ -1620,8 +1612,8 @@ impl AnalysisSession {
                 if self.add_uses_edge(from_node, ret_id) {
                     info!(
                         "New edge added for Use from {} to {} (return-value propagation)",
-                        self.nodes_arena[from_node].get_name(&self.graph.interner),
-                        self.nodes_arena[ret_id].get_name(&self.graph.interner)
+                        self.graph.nodes_arena[from_node].get_name(&self.graph.interner),
+                        self.graph.nodes_arena[ret_id].get_name(&self.graph.interner)
                     );
                 }
                 if first_ret.is_none() {
@@ -1693,7 +1685,7 @@ impl AnalysisSession {
 
         // Add defines edge for the lambda
         let from_node = self.get_node_of_current_namespace();
-        let from_name = self.nodes_arena[from_node].get_name(&self.graph.interner).to_owned();
+        let from_name = self.graph.nodes_arena[from_node].get_name(&self.graph.interner).to_owned();
         let to_node = self.get_node(Some(&from_name), label, Flavor::Namespace);
         self.add_defines_edge(from_node, Some(to_node));
 
@@ -1748,7 +1740,7 @@ impl AnalysisSession {
     /// directly in the class scope, then through the MRO chain.
     fn emit_protocol_edges(&mut self, obj_id: NodeId, method_names: &[&str]) {
         let from_node = self.get_node_of_current_namespace();
-        let class_ns = self.nodes_arena[obj_id].get_name(&self.graph.interner).to_owned();
+        let class_ns = self.graph.nodes_arena[obj_id].get_name(&self.graph.interner).to_owned();
 
         for &method_name in method_names {
             // Direct lookup in the class scope.
@@ -1756,8 +1748,8 @@ impl AnalysisSession {
                 if self.add_uses_edge(from_node, method_id) {
                     info!(
                         "New edge added for Use from {} to {} (protocol: {})",
-                        self.nodes_arena[from_node].get_name(&self.graph.interner),
-                        self.nodes_arena[method_id].get_name(&self.graph.interner),
+                        self.graph.nodes_arena[from_node].get_name(&self.graph.interner),
+                        self.graph.nodes_arena[method_id].get_name(&self.graph.interner),
                         method_name
                     );
                 }
@@ -1766,7 +1758,7 @@ impl AnalysisSession {
                 let mro_ids: Option<Vec<usize>> = self.mro.get(&obj_id).map(|m| m.clone());
                 let method_id = mro_ids.as_ref().and_then(|mro| {
                     mro.iter().skip(1).find_map(|&base_id| {
-                        let base_ns = self.nodes_arena[base_id].get_name(&self.graph.interner).to_owned();
+                        let base_ns = self.graph.nodes_arena[base_id].get_name(&self.graph.interner).to_owned();
                         self.lookup_in_scope(&base_ns, method_name)
                     })
                 });
@@ -1775,8 +1767,8 @@ impl AnalysisSession {
                 {
                     info!(
                         "New edge added for Use from {} to {} (protocol via MRO: {})",
-                        self.nodes_arena[from_node].get_name(&self.graph.interner),
-                        self.nodes_arena[method_id].get_name(&self.graph.interner),
+                        self.graph.nodes_arena[from_node].get_name(&self.graph.interner),
+                        self.graph.nodes_arena[method_id].get_name(&self.graph.interner),
                         method_name
                     );
                 }
@@ -1879,7 +1871,7 @@ impl AnalysisSession {
 
         // Add defines edge
         let from_node = self.get_node_of_current_namespace();
-        let from_name = self.nodes_arena[from_node].get_name(&self.graph.interner).to_owned();
+        let from_name = self.graph.nodes_arena[from_node].get_name(&self.graph.interner).to_owned();
         let to_node = self.get_node(Some(&from_name), label, Flavor::Namespace);
         self.add_defines_edge(from_node, Some(to_node));
 
@@ -2267,10 +2259,10 @@ else:
             generic, upgraded,
             "same namespace/name should reuse node id"
         );
-        assert_eq!(session.nodes_arena[generic].flavor, Flavor::Function);
+        assert_eq!(session.graph.nodes_arena[generic].flavor, Flavor::Function);
         assert_ne!(generic, sibling, "different namespaces must not alias");
         let thing_sym = session.graph.interner.intern("thing");
-        assert_eq!(session.nodes_by_name[&thing_sym].len(), 2);
+        assert_eq!(session.graph.nodes_by_name[&thing_sym].len(), 2);
     }
 
     #[test]
@@ -2573,7 +2565,7 @@ def outer(cond, items, manager):
             "same (namespace, name) should reuse the node id"
         );
         assert_eq!(
-            session.nodes_arena[first].flavor,
+            session.graph.nodes_arena[first].flavor,
             Flavor::Method,
             "later, more-specific lookups should upgrade the stored flavor",
         );
@@ -2637,7 +2629,7 @@ def gen_case(items):
                 "{fn_name} should define its comprehension node"
             );
             let expected_sym = session.graph.interner.intern(expected_label);
-            assert_eq!(session.nodes_arena[node_id].name, expected_sym);
+            assert_eq!(session.graph.nodes_arena[node_id].name, expected_sym);
         }
     }
 
@@ -2912,7 +2904,7 @@ def outer(posonly, /, arg, *va, kw, **kwarg):
             id, downgraded,
             "node lookup should stay keyed by namespace+name"
         );
-        assert_eq!(session.nodes_arena[id].flavor, Flavor::Method);
+        assert_eq!(session.graph.nodes_arena[id].flavor, Flavor::Method);
     }
 
     #[test]

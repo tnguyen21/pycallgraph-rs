@@ -7,7 +7,7 @@ impl AnalysisSession {
         kind: ExternalReferenceKind,
         canonical_name: String,
     ) {
-        let source = &self.nodes_arena[source_id];
+        let source = &self.graph.nodes_arena[source_id];
         let diagnostic = ExternalReferenceDiagnostic {
             source_canonical_name: source.get_name(&self.graph.interner).to_string(),
             source_filename: source.filename,
@@ -38,15 +38,15 @@ impl AnalysisSession {
             name: name_sym,
         };
         if let Some(&id) = self.node_ids_by_key.get(&key) {
-            let n = &self.nodes_arena[id];
+            let n = &self.graph.nodes_arena[id];
             if flavor.specificity() > n.flavor.specificity() {
-                self.nodes_arena[id].flavor = flavor;
+                self.graph.nodes_arena[id].flavor = flavor;
             }
             return id;
         }
 
         let filename = if let Some(ns_sym) = ns_sym {
-            if let Some(&f) = self.module_to_filename.get(&ns_sym) {
+            if let Some(&f) = self.graph.module_to_filename.get(&ns_sym) {
                 Some(f)
             } else {
                 Some(self.filename)
@@ -69,16 +69,16 @@ impl AnalysisSession {
         };
         let mut node = Node::new(ns_sym, name_sym, fqn_sym, flavor);
         node.filename = filename;
-        let id = self.nodes_arena.len();
+        let id = self.graph.nodes_arena.len();
         if ns_sym.is_none() {
-            self.defined.insert(id);
+            self.graph.defined.insert(id);
         }
 
-        self.nodes_arena.push(node);
+        self.graph.nodes_arena.push(node);
         self.uses_edges.push(FxHashSet::default());
         self.defines_edges.push(FxHashSet::default());
         self.node_ids_by_key.insert(key, id);
-        self.nodes_by_name.entry(name_sym).or_default().push(id);
+        self.graph.nodes_by_name.entry(name_sym).or_default().push(id);
         id
     }
 
@@ -115,15 +115,15 @@ impl AnalysisSession {
             name,
         };
         if let Some(&id) = self.node_ids_by_key.get(&key) {
-            let n = &self.nodes_arena[id];
+            let n = &self.graph.nodes_arena[id];
             if flavor.specificity() > n.flavor.specificity() {
-                self.nodes_arena[id].flavor = flavor;
+                self.graph.nodes_arena[id].flavor = flavor;
             }
             return id;
         }
 
         let filename = if let Some(ns_sym) = namespace {
-            if let Some(&f) = self.module_to_filename.get(&ns_sym) {
+            if let Some(&f) = self.graph.module_to_filename.get(&ns_sym) {
                 Some(f)
             } else {
                 Some(self.filename)
@@ -147,16 +147,16 @@ impl AnalysisSession {
         };
         let mut node = Node::new(namespace, name, fqn, flavor);
         node.filename = filename;
-        let id = self.nodes_arena.len();
+        let id = self.graph.nodes_arena.len();
         if namespace.is_none() {
-            self.defined.insert(id);
+            self.graph.defined.insert(id);
         }
 
-        self.nodes_arena.push(node);
+        self.graph.nodes_arena.push(node);
         self.uses_edges.push(FxHashSet::default());
         self.defines_edges.push(FxHashSet::default());
         self.node_ids_by_key.insert(key, id);
-        self.nodes_by_name.entry(name).or_default().push(id);
+        self.graph.nodes_by_name.entry(name).or_default().push(id);
         id
     }
 
@@ -173,7 +173,7 @@ impl AnalysisSession {
     }
 
     pub(super) fn get_parent_node(&mut self, node_id: NodeId) -> NodeId {
-        let node = &self.nodes_arena[node_id];
+        let node = &self.graph.nodes_arena[node_id];
         let (ns, name) = if let Some(ns_sym) = node.namespace {
             let ns_str = self.graph.interner.resolve(ns_sym).to_owned();
             if ns_str.contains('.') {
@@ -191,8 +191,8 @@ impl AnalysisSession {
     }
 
     pub(super) fn associate_node(&mut self, node_id: NodeId, filename: SymId, line: usize) {
-        self.nodes_arena[node_id].filename = Some(filename);
-        self.nodes_arena[node_id].line = Some(line);
+        self.graph.nodes_arena[node_id].filename = Some(filename);
+        self.graph.nodes_arena[node_id].line = Some(line);
     }
 
     pub(super) fn record_function_return(&mut self, fn_node: NodeId, ret_id: NodeId) -> bool {
@@ -206,9 +206,9 @@ impl AnalysisSession {
     }
 
     pub(super) fn add_defines_edge(&mut self, from_id: NodeId, to_id: Option<NodeId>) -> bool {
-        self.defined.insert(from_id);
+        self.graph.defined.insert(from_id);
         if let Some(to) = to_id {
-            self.defined.insert(to);
+            self.graph.defined.insert(to);
             self.defines_edges[from_id].insert(to)
         } else {
             false
@@ -218,8 +218,8 @@ impl AnalysisSession {
     pub(super) fn add_uses_edge(&mut self, from_id: NodeId, to_id: NodeId) -> bool {
         let entry = &mut self.uses_edges[from_id];
         if entry.insert(to_id) {
-            let to_name = self.nodes_arena[to_id].name;
-            let to_ns = self.nodes_arena[to_id].namespace;
+            let to_name = self.graph.nodes_arena[to_id].name;
+            let to_ns = self.graph.nodes_arena[to_id].namespace;
             if to_ns.is_none() {
                 // Register wildcard edge in the index.
                 self.wild_edge_index.insert((from_id, to_name), to_id);
@@ -236,7 +236,7 @@ impl AnalysisSession {
         let edges = &mut self.uses_edges[from_id];
         if edges.remove(&to_id) {
             // Clean up wild index if the removed edge was a wildcard.
-            let node = &self.nodes_arena[to_id];
+            let node = &self.graph.nodes_arena[to_id];
             if node.namespace.is_none() {
                 self.wild_edge_index.remove(&(from_id, node.name));
             }
@@ -250,16 +250,16 @@ impl AnalysisSession {
         }
 
         let sentinel = self.graph.interner.intern("^^^argument^^^");
-        if self.nodes_arena[to_id].name == sentinel || to_id == from_id {
+        if self.graph.nodes_arena[to_id].name == sentinel || to_id == from_id {
             return;
         }
 
         if let Some(&wild_id) = self.wild_edge_index.get(&(from_id, name_sym)) {
             info!(
                 "Use from {} to {} resolves {}; removing wildcard",
-                self.nodes_arena[from_id].get_name(&self.graph.interner),
-                self.nodes_arena[to_id].get_name(&self.graph.interner),
-                self.nodes_arena[wild_id].get_name(&self.graph.interner)
+                self.graph.nodes_arena[from_id].get_name(&self.graph.interner),
+                self.graph.nodes_arena[to_id].get_name(&self.graph.interner),
+                self.graph.nodes_arena[wild_id].get_name(&self.graph.interner)
             );
             self.remove_uses_edge(from_id, wild_id);
         }

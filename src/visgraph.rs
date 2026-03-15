@@ -3,6 +3,7 @@
 //! Converts the raw call graph (node arena + edge maps) into [`VisualGraph`],
 //! which writers can render to DOT, TGF, plain text, etc.
 
+use crate::compact_edges::CompactEdgeSet;
 use crate::intern::{Interner, SymId};
 use crate::node::{Node, NodeId};
 use crate::{FxHashMap, FxHashSet};
@@ -249,8 +250,8 @@ impl VisualGraph {
     pub fn from_call_graph(
         nodes_arena: &[Node],
         defined: &FxHashSet<NodeId>,
-        defines_edges: &[FxHashSet<NodeId>],
-        uses_edges: &[FxHashSet<NodeId>],
+        defines_edges: &[CompactEdgeSet],
+        uses_edges: &[CompactEdgeSet],
         options: &VisualOptions,
         interner: &Interner,
     ) -> Self {
@@ -573,8 +574,11 @@ mod tests {
         defined.insert(0);
         defined.insert(1);
 
-        let mut uses_edges = vec![FxHashSet::default(); 2];
-        uses_edges[0].insert(1);
+        let uses_edges: Vec<CompactEdgeSet> = {
+            let mut u = vec![FxHashSet::default(); 2];
+            u[0].insert(1);
+            u.into_iter().map(CompactEdgeSet::from).collect()
+        };
 
         let options = VisualOptions {
             draw_defines: false,
@@ -587,7 +591,7 @@ mod tests {
         let vg = VisualGraph::from_call_graph(
             &nodes_arena,
             &defined,
-            &[FxHashSet::default(); 0],
+            &[],
             &uses_edges,
             &options,
             &interner,

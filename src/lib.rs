@@ -1,4 +1,5 @@
 pub mod analyzer;
+pub mod compact_edges;
 pub mod intern;
 pub mod node;
 pub mod query;

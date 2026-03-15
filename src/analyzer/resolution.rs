@@ -13,9 +13,9 @@ impl AnalysisSession {
                 let (obj_node, inner_attr_name) = self.resolve_attribute(inner_attr);
 
                 if let Some(obj_id) = obj_node
-                    && self.nodes_arena[obj_id].namespace.is_some()
+                    && self.graph.nodes_arena[obj_id].namespace.is_some()
                 {
-                    let ns = self.nodes_arena[obj_id].get_name(&self.graph.interner);
+                    let ns = self.graph.nodes_arena[obj_id].get_name(&self.graph.interner);
                     if let Some(val) = self.lookup_in_scope(&ns, &inner_attr_name) {
                         return (Some(val), attr_name);
                     }
@@ -48,16 +48,16 @@ impl AnalysisSession {
                 let mut seen = FxHashSet::default();
                 let mut results = Vec::new();
                 for obj_id in obj_ids {
-                    if self.nodes_arena[obj_id].namespace.is_none() {
+                    if self.graph.nodes_arena[obj_id].namespace.is_none() {
                         continue;
                     }
-                    let ns = self.nodes_arena[obj_id].get_name(&self.graph.interner);
+                    let ns = self.graph.nodes_arena[obj_id].get_name(&self.graph.interner);
                     let values = self.lookup_values_in_scope(&ns, &attr_name);
                     if values.is_empty() {
                         if let Some(mro) = self.mro.get(&obj_id) {
                             for &base_id in mro.iter().skip(1) {
                                 let base_ns =
-                                    self.nodes_arena[base_id].get_name(&self.graph.interner);
+                                    self.graph.nodes_arena[base_id].get_name(&self.graph.interner);
                                 let base_values =
                                     self.lookup_values_in_scope(&base_ns, &attr_name);
                                 for id in base_values.iter() {
@@ -150,9 +150,9 @@ impl AnalysisSession {
         let (obj_node, attr_name) = self.resolve_attribute(expr);
 
         if let Some(obj_id) = obj_node
-            && self.nodes_arena[obj_id].namespace.is_some()
+            && self.graph.nodes_arena[obj_id].namespace.is_some()
         {
-            let ns = self.nodes_arena[obj_id].get_name(&self.graph.interner).to_owned();
+            let ns = self.graph.nodes_arena[obj_id].get_name(&self.graph.interner).to_owned();
             let ns_sym = self.graph.interner.intern(&ns);
             let attr_sym = self.graph.interner.intern(&attr_name);
             if let Some(scope) = self.scopes.get_mut(&ns_sym) {
@@ -175,9 +175,9 @@ impl AnalysisSession {
         let (obj_node, attr_name) = self.resolve_attribute(expr);
 
         if let Some(obj_id) = obj_node
-            && self.nodes_arena[obj_id].namespace.is_some()
+            && self.graph.nodes_arena[obj_id].namespace.is_some()
         {
-            let ns = self.nodes_arena[obj_id].get_name(&self.graph.interner).to_owned();
+            let ns = self.graph.nodes_arena[obj_id].get_name(&self.graph.interner).to_owned();
             let ns_sym = self.graph.interner.intern(&ns);
             let attr_sym = self.graph.interner.intern(&attr_name);
             if let Some(scope) = self.scopes.get_mut(&ns_sym) {
@@ -213,11 +213,11 @@ impl AnalysisSession {
                 let mut resolved = ShallowValue::default();
                 let obj_ids = self.get_obj_ids_for_expr(&node.value);
                 for obj_id in obj_ids {
-                    if self.nodes_arena[obj_id].namespace.is_none() {
+                    if self.graph.nodes_arena[obj_id].namespace.is_none() {
                         continue;
                     }
 
-                    let ns = self.nodes_arena[obj_id].get_name(&self.graph.interner);
+                    let ns = self.graph.nodes_arena[obj_id].get_name(&self.graph.interner);
                     let attr_name = node.attr.id.to_string();
                     let direct_values = self.lookup_values_in_scope(&ns, &attr_name);
                     let direct_containers = self.lookup_containers_in_scope(&ns, &attr_name);
@@ -226,7 +226,7 @@ impl AnalysisSession {
                         if let Some(mro) = self.mro.get(&obj_id) {
                             for &base_id in mro.iter().skip(1) {
                                 let base_ns =
-                                    self.nodes_arena[base_id].get_name(&self.graph.interner);
+                                    self.graph.nodes_arena[base_id].get_name(&self.graph.interner);
                                 let base_values =
                                     self.lookup_values_in_scope(&base_ns, &attr_name);
                                 let base_containers =
@@ -378,7 +378,7 @@ impl AnalysisSession {
 
         for (cls_id, refs) in &class_refs {
             let mut bases = Vec::new();
-            let cls_namespace = self.nodes_arena[*cls_id]
+            let cls_namespace = self.graph.nodes_arena[*cls_id]
                 .namespace
                 .map(|s| self.graph.interner.resolve(s).to_owned())
                 .unwrap_or_default();
@@ -390,7 +390,7 @@ impl AnalysisSession {
                 };
 
                 if let Some(base_id) = base_id
-                    && self.nodes_arena[base_id].namespace.is_some()
+                    && self.graph.nodes_arena[base_id].namespace.is_some()
                 {
                     bases.push(base_id);
                 }
@@ -428,7 +428,7 @@ impl AnalysisSession {
 
         let mut current = self.get_value(&parts[0])?;
         for part in parts.iter().skip(1) {
-            let ns = self.nodes_arena[current].get_name(&self.graph.interner);
+            let ns = self.graph.nodes_arena[current].get_name(&self.graph.interner);
             if let Some(val) = self.lookup_in_scope(&ns, part.as_str()) {
                 current = val;
                 continue;
