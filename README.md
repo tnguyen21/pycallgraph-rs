@@ -1,7 +1,7 @@
 # pycg-rs
 
-[![CI](https://github.com/tnguyen21/pycg-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/tnguyen21/pycg-rs/actions/workflows/ci.yml)
-[![Analysis Report](https://github.com/tnguyen21/pycg-rs/actions/workflows/report.yml/badge.svg)](https://github.com/tnguyen21/pycg-rs/actions/workflows/report.yml)
+[![CI](https://github.com/nwyin/pycg-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/nwyin/pycg-rs/actions/workflows/ci.yml)
+[![Analysis Report](https://github.com/nwyin/pycg-rs/actions/workflows/report.yml/badge.svg)](https://github.com/nwyin/pycg-rs/actions/workflows/report.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Fast static Python call graphs in Rust.
@@ -12,12 +12,12 @@ Parses Python source files and produces a directed graph of defines/uses relatio
 - Module-level and symbol-level graph modes
 - Real-world corpus smoke testing and a published GitHub Pages report
 
-GitHub Pages report: <https://tnguyen21.github.io/pycg-rs/>
+GitHub Pages report: <https://nwyin.github.io/pycg-rs/>
 
 ## Installation
 
 ```bash
-cargo install --git https://github.com/tnguyen21/pycg-rs --bin pycg
+cargo install --git https://github.com/nwyin/pycg-rs --bin pycg
 ```
 
 For local development from a checkout:

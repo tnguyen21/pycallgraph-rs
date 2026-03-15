@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use crate::{FxHashMap, FxHashSet};
 
 // log::info is used transitively via add_uses_edge/add_defines_edge in super
 
@@ -28,7 +28,7 @@ impl super::AnalysisSession {
         // Build index of (from_id, short_name) pairs that already have a
         // concrete (namespaced) uses edge.  Wildcards whose (from, name) are
         // covered by a concrete edge will be suppressed.
-        let mut concrete_uses_pairs: HashSet<(NodeId, String)> = HashSet::new();
+        let mut concrete_uses_pairs: FxHashSet<(NodeId, String)> = FxHashSet::default();
         for (&from, targets) in &self.uses_edges {
             for &to in targets {
                 if self.nodes_arena[to].namespace.is_some() {
@@ -138,7 +138,7 @@ impl super::AnalysisSession {
             .filter(|&id| self.nodes_arena[id].flavor == Flavor::ImportedItem)
             .collect();
 
-        let mut import_mapping: HashMap<NodeId, NodeId> = HashMap::new();
+        let mut import_mapping: FxHashMap<NodeId, NodeId> = FxHashMap::default();
         let mut to_resolve: Vec<NodeId> = import_nodes;
 
         while let Some(from_id) = to_resolve.pop() {
@@ -219,7 +219,7 @@ impl super::AnalysisSession {
             let remap = |id: NodeId| -> NodeId { *import_mapping.get(&id).unwrap_or(&id) };
 
             // Remap uses_edges
-            let old_uses: Vec<(NodeId, HashSet<NodeId>)> = self.uses_edges.drain().collect();
+            let old_uses: Vec<(NodeId, FxHashSet<NodeId>)> = self.uses_edges.drain().collect();
             for (from, targets) in old_uses {
                 if targets.is_empty() {
                     continue;
@@ -232,7 +232,7 @@ impl super::AnalysisSession {
             }
 
             // Remap defines_edges
-            let old_defines: Vec<(NodeId, HashSet<NodeId>)> = self.defines_edges.drain().collect();
+            let old_defines: Vec<(NodeId, FxHashSet<NodeId>)> = self.defines_edges.drain().collect();
             for (from, targets) in old_defines {
                 if targets.is_empty() {
                     continue;
@@ -291,7 +291,7 @@ impl super::AnalysisSession {
     fn cull_inherited(&mut self) {
         let mut removed: Vec<(NodeId, NodeId)> = Vec::new();
 
-        let uses_snapshot: Vec<(NodeId, HashSet<NodeId>)> = self
+        let uses_snapshot: Vec<(NodeId, FxHashSet<NodeId>)> = self
             .uses_edges
             .iter()
             .map(|(&k, v)| (k, v.clone()))
@@ -377,16 +377,16 @@ impl super::CallGraph {
     /// directly to `VisualGraph::from_call_graph`.
     pub fn derive_module_graph(
         &self,
-    ) -> (Vec<Node>, HashMap<NodeId, HashSet<NodeId>>, HashSet<NodeId>) {
+    ) -> (Vec<Node>, FxHashMap<NodeId, FxHashSet<NodeId>>, FxHashSet<NodeId>) {
         // Reverse mapping: filename -> module name (for analyzed files).
-        let filename_to_module: HashMap<&str, &str> = self
+        let filename_to_module: FxHashMap<&str, &str> = self
             .module_to_filename
             .iter()
             .map(|(m, f)| (f.as_str(), m.as_str()))
             .collect();
 
         // Collect module nodes and assign new compact IDs.
-        let mut module_ids: HashMap<String, NodeId> = HashMap::new();
+        let mut module_ids: FxHashMap<String, NodeId> = FxHashMap::default();
         let mut new_nodes: Vec<Node> = Vec::new();
 
         let mut ensure_module = |name: &str, nodes: &mut Vec<Node>| -> NodeId {
@@ -404,7 +404,7 @@ impl super::CallGraph {
             new_nodes[id].filename = Some(filename.clone());
         }
 
-        let mut module_edges: HashMap<NodeId, HashSet<NodeId>> = HashMap::new();
+        let mut module_edges: FxHashMap<NodeId, FxHashSet<NodeId>> = FxHashMap::default();
 
         for (&src, targets) in &self.uses_edges {
             let src_node = &self.nodes_arena[src];
@@ -438,7 +438,7 @@ impl super::CallGraph {
             }
         }
 
-        let defined: HashSet<NodeId> = (0..new_nodes.len()).collect();
+        let defined: FxHashSet<NodeId> = (0..new_nodes.len()).collect();
         (new_nodes, module_edges, defined)
     }
 }

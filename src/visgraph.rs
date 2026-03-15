@@ -4,7 +4,8 @@
 //! which writers can render to DOT, TGF, plain text, etc.
 
 use crate::node::{Node, NodeId};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use crate::{FxHashMap, FxHashSet};
+use std::collections::BTreeMap;
 
 // ---------------------------------------------------------------------------
 // Color helpers
@@ -72,7 +73,7 @@ pub fn rgb_hex(r: f64, g: f64, b: f64) -> String {
 pub struct Colorizer {
     colored: bool,
     hues: Vec<f64>,
-    idx_of: HashMap<Option<String>, usize>,
+    idx_of: FxHashMap<Option<String>, usize>,
     idx: usize,
 }
 
@@ -90,7 +91,7 @@ impl Colorizer {
         Self {
             colored,
             hues,
-            idx_of: HashMap::new(),
+            idx_of: FxHashMap::default(),
             idx: 0,
         }
     }
@@ -239,9 +240,9 @@ impl VisualGraph {
     /// * `options`        - Rendering options.
     pub fn from_call_graph(
         nodes_arena: &[Node],
-        defined: &HashSet<NodeId>,
-        defines_edges: &HashMap<NodeId, HashSet<NodeId>>,
-        uses_edges: &HashMap<NodeId, HashSet<NodeId>>,
+        defined: &FxHashSet<NodeId>,
+        defines_edges: &FxHashMap<NodeId, FxHashSet<NodeId>>,
+        uses_edges: &FxHashMap<NodeId, FxHashSet<NodeId>>,
         options: &VisualOptions,
     ) -> Self {
         // 1. Collect defined nodes sorted by (namespace, name).
@@ -253,7 +254,7 @@ impl VisualGraph {
         });
 
         // 2. Count distinct filenames for the colorizer.
-        let filenames: HashSet<Option<String>> = sorted_ids
+        let filenames: FxHashSet<Option<String>> = sorted_ids
             .iter()
             .map(|&id| nodes_arena[id].filename.clone())
             .collect();
@@ -263,7 +264,7 @@ impl VisualGraph {
         //    the root graph's flat node list.  We will place references (by
         //    index) into subgraphs later.
         let mut all_nodes: Vec<VisualNode> = Vec::with_capacity(sorted_ids.len());
-        let mut id_to_vis_idx: HashMap<NodeId, usize> = HashMap::new();
+        let mut id_to_vis_idx: FxHashMap<NodeId, usize> = FxHashMap::default();
 
         // For grouping: namespace → list of vis-node indices.
         let mut ns_to_indices: BTreeMap<String, Vec<usize>> = BTreeMap::new();
@@ -525,12 +526,12 @@ mod tests {
             Node::new(Some("pkg"), "A", Flavor::Class).with_location("pkg.py", 1),
             Node::new(Some("pkg"), "B", Flavor::Function).with_location("pkg.py", 10),
         ];
-        let mut defined = HashSet::new();
+        let mut defined = FxHashSet::default();
         defined.insert(0);
         defined.insert(1);
 
-        let mut uses_edges = HashMap::new();
-        uses_edges.entry(0).or_insert_with(HashSet::new).insert(1);
+        let mut uses_edges = FxHashMap::default();
+        uses_edges.entry(0).or_insert_with(FxHashSet::default).insert(1);
 
         let options = VisualOptions {
             draw_defines: false,
@@ -543,7 +544,7 @@ mod tests {
         let vg = VisualGraph::from_call_graph(
             &nodes_arena,
             &defined,
-            &HashMap::new(),
+            &FxHashMap::default(),
             &uses_edges,
             &options,
         );
@@ -560,7 +561,7 @@ mod tests {
             Node::new(Some("pkg"), "A", Flavor::Class).with_location("pkg.py", 1),
             Node::new(Some("other"), "B", Flavor::Function).with_location("other.py", 5),
         ];
-        let mut defined = HashSet::new();
+        let mut defined = FxHashSet::default();
         defined.insert(0);
         defined.insert(1);
 
@@ -575,8 +576,8 @@ mod tests {
         let vg = VisualGraph::from_call_graph(
             &nodes_arena,
             &defined,
-            &HashMap::new(),
-            &HashMap::new(),
+            &FxHashMap::default(),
+            &FxHashMap::default(),
             &options,
         );
 
@@ -591,7 +592,7 @@ mod tests {
     fn test_from_call_graph_grouped_annotated_labels_include_locations() {
         let nodes_arena =
             vec![Node::new(Some("pkg"), "A", Flavor::Class).with_location("pkg.py", 7)];
-        let defined = HashSet::from([0]);
+        let defined = FxHashSet::from_iter([0]);
 
         let options = VisualOptions {
             draw_defines: false,
@@ -604,8 +605,8 @@ mod tests {
         let vg = VisualGraph::from_call_graph(
             &nodes_arena,
             &defined,
-            &HashMap::new(),
-            &HashMap::new(),
+            &FxHashMap::default(),
+            &FxHashMap::default(),
             &options,
         );
 

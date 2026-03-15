@@ -1,11 +1,11 @@
-use std::collections::{HashMap, HashSet};
+use crate::{FxHashMap, FxHashSet};
 
 use crate::node::NodeId;
 
 /// Compute the method resolution order (MRO) using C3 linearization.
 pub(super) fn resolve_mro(
-    class_base_nodes: &HashMap<NodeId, Vec<NodeId>>,
-) -> HashMap<NodeId, Vec<NodeId>> {
+    class_base_nodes: &FxHashMap<NodeId, Vec<NodeId>>,
+) -> FxHashMap<NodeId, Vec<NodeId>> {
     fn head(lst: &[NodeId]) -> Option<NodeId> {
         lst.first().copied()
     }
@@ -43,14 +43,14 @@ pub(super) fn resolve_mro(
         out
     }
 
-    let mut mro = HashMap::new();
-    let mut memo: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
+    let mut mro = FxHashMap::default();
+    let mut memo: FxHashMap<NodeId, Vec<NodeId>> = FxHashMap::default();
 
     fn c3_linearize(
         node: NodeId,
-        class_base_nodes: &HashMap<NodeId, Vec<NodeId>>,
-        memo: &mut HashMap<NodeId, Vec<NodeId>>,
-        seen: &mut HashSet<NodeId>,
+        class_base_nodes: &FxHashMap<NodeId, Vec<NodeId>>,
+        memo: &mut FxHashMap<NodeId, Vec<NodeId>>,
+        seen: &mut FxHashSet<NodeId>,
     ) -> Vec<NodeId> {
         seen.insert(node);
         if let Some(cached) = memo.get(&node) {
@@ -78,7 +78,7 @@ pub(super) fn resolve_mro(
     }
 
     for &cls in class_base_nodes.keys() {
-        let mut seen = HashSet::new();
+        let mut seen = FxHashSet::default();
         let lin = c3_linearize(cls, class_base_nodes, &mut memo, &mut seen);
         mro.insert(cls, lin);
     }
@@ -93,7 +93,7 @@ mod tests {
     #[test]
     fn test_resolve_mro_simple() {
         // A -> B -> C (linear chain)
-        let mut bases = HashMap::new();
+        let mut bases = FxHashMap::default();
         bases.insert(0, vec![1]); // A inherits from B
         bases.insert(1, vec![2]); // B inherits from C
         bases.insert(2, vec![]); // C has no bases
@@ -107,7 +107,7 @@ mod tests {
     #[test]
     fn test_resolve_mro_diamond() {
         // D inherits from B, C; both B and C inherit from A
-        let mut bases = HashMap::new();
+        let mut bases = FxHashMap::default();
         bases.insert(3, vec![1, 2]); // D -> B, C
         bases.insert(1, vec![0]); // B -> A
         bases.insert(2, vec![0]); // C -> A

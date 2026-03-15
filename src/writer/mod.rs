@@ -7,7 +7,8 @@ use crate::analyzer::AnalysisDiagnostics;
 use crate::node::{Node, NodeId};
 use crate::visgraph::{VisualGraph, VisualNode};
 use serde::Serialize;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use crate::{FxHashMap, FxHashSet};
+use std::collections::BTreeMap;
 use std::fmt::Write;
 use std::path::{Path, PathBuf};
 
@@ -447,9 +448,9 @@ fn diagnostic_location(
 
 fn build_json_diagnostics(
     nodes_arena: &[Node],
-    defined: &HashSet<NodeId>,
-    uses_edges: &HashMap<NodeId, HashSet<NodeId>>,
-    node_ids: &HashMap<NodeId, String>,
+    defined: &FxHashSet<NodeId>,
+    uses_edges: &FxHashMap<NodeId, FxHashSet<NodeId>>,
+    node_ids: &FxHashMap<NodeId, String>,
     analyzer_diagnostics: &AnalysisDiagnostics,
     graph_mode: &JsonGraphMode,
     path_formatter: &PathFormatter,
@@ -460,13 +461,13 @@ fn build_json_diagnostics(
     let mut ambiguous_resolutions: Vec<JsonAmbiguousResolution> = Vec::new();
     let mut approximations: Vec<JsonApproximation> = Vec::new();
 
-    let mut unresolved_seen: HashSet<(NodeId, String)> = HashSet::new();
+    let mut unresolved_seen: FxHashSet<(NodeId, String)> = FxHashSet::default();
 
-    let canonical_name_to_output_id: HashMap<String, String> = node_ids
+    let canonical_name_to_output_id: FxHashMap<String, String> = node_ids
         .iter()
         .map(|(node_id, output_id)| (nodes_arena[*node_id].get_name(), output_id.clone()))
         .collect();
-    let path_to_output_id: HashMap<String, String> = node_ids
+    let path_to_output_id: FxHashMap<String, String> = node_ids
         .iter()
         .filter_map(|(node_id, output_id)| {
             nodes_arena[*node_id]
@@ -475,7 +476,7 @@ fn build_json_diagnostics(
                 .map(|filename| (path_formatter.format_location(filename), output_id.clone()))
         })
         .collect();
-    let mut unresolved_suppressions: HashSet<(String, String)> = HashSet::new();
+    let mut unresolved_suppressions: FxHashSet<(String, String)> = FxHashSet::default();
 
     for diagnostic in &analyzer_diagnostics.external_references {
         let source = match graph_mode {
@@ -673,9 +674,9 @@ fn build_json_diagnostics(
 /// the raw call graph data for machine consumption.
 pub fn write_json(
     nodes_arena: &[Node],
-    defined: &HashSet<NodeId>,
-    defines_edges: &HashMap<NodeId, HashSet<NodeId>>,
-    uses_edges: &HashMap<NodeId, HashSet<NodeId>>,
+    defined: &FxHashSet<NodeId>,
+    defines_edges: &FxHashMap<NodeId, FxHashSet<NodeId>>,
+    uses_edges: &FxHashMap<NodeId, FxHashSet<NodeId>>,
     analyzer_diagnostics: &AnalysisDiagnostics,
     options: &JsonOutputOptions<'_>,
 ) -> String {
@@ -688,9 +689,9 @@ pub fn write_json(
         (&na.namespace, &na.name).cmp(&(&nb.namespace, &nb.name))
     });
 
-    let mut files: HashSet<&str> = HashSet::new();
+    let mut files: FxHashSet<&str> = FxHashSet::default();
     let mut node_kind_counts: BTreeMap<String, usize> = BTreeMap::new();
-    let mut node_ids = HashMap::new();
+    let mut node_ids = FxHashMap::default();
 
     for (index, &id) in sorted_ids.iter().enumerate() {
         node_ids.insert(id, format!("n{}", index + 1));
@@ -721,7 +722,7 @@ pub fn write_json(
         });
     }
 
-    let defined_set: &HashSet<NodeId> = defined;
+    let defined_set: &FxHashSet<NodeId> = defined;
     let mut edges = Vec::new();
     let mut edge_kind_counts: BTreeMap<String, usize> = BTreeMap::new();
 
@@ -827,7 +828,7 @@ mod tests {
     use super::*;
     use crate::node::{Flavor, Node};
     use crate::visgraph::VisualOptions;
-    use std::collections::{HashMap, HashSet};
+    use crate::{FxHashMap, FxHashSet};
 
     fn make_test_graph() -> VisualGraph {
         let nodes_arena = vec![
@@ -835,17 +836,17 @@ mod tests {
             Node::new(Some("pkg"), "bar", Flavor::Function).with_location("pkg.py", 10),
             Node::new(Some("other"), "baz", Flavor::Function).with_location("other.py", 5),
         ];
-        let mut defined = HashSet::new();
+        let mut defined = FxHashSet::default();
         defined.insert(0);
         defined.insert(1);
         defined.insert(2);
 
-        let mut uses = HashMap::new();
-        uses.entry(0).or_insert_with(HashSet::new).insert(1);
-        uses.entry(1).or_insert_with(HashSet::new).insert(2);
+        let mut uses = FxHashMap::default();
+        uses.entry(0).or_insert_with(FxHashSet::default).insert(1);
+        uses.entry(1).or_insert_with(FxHashSet::default).insert(2);
 
-        let mut defines = HashMap::new();
-        defines.entry(0).or_insert_with(HashSet::new).insert(1);
+        let mut defines = FxHashMap::default();
+        defines.entry(0).or_insert_with(FxHashSet::default).insert(1);
 
         let options = VisualOptions {
             draw_defines: true,
@@ -874,7 +875,7 @@ mod tests {
             Node::new(Some("pkg"), "A", Flavor::Class).with_location("pkg.py", 1),
             Node::new(Some("other"), "B", Flavor::Function).with_location("other.py", 5),
         ];
-        let mut defined = HashSet::new();
+        let mut defined = FxHashSet::default();
         defined.insert(0);
         defined.insert(1);
 
@@ -889,8 +890,8 @@ mod tests {
         let g = VisualGraph::from_call_graph(
             &nodes_arena,
             &defined,
-            &HashMap::new(),
-            &HashMap::new(),
+            &FxHashMap::default(),
+            &FxHashMap::default(),
             &options,
         );
         let dot = write_dot(&g, &[]);

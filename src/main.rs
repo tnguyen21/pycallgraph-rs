@@ -401,7 +401,7 @@ fn run_analyze(args: &AnalyzeArgs, root: Option<&str>) -> Result<String> {
             writer::write_json(
                 &mod_nodes,
                 &mod_defined,
-                &std::collections::HashMap::new(),
+                &pycg_rs::FxHashMap::default(),
                 &mod_uses,
                 &cg.diagnostics,
                 &JsonOutputOptions {
@@ -437,7 +437,7 @@ fn run_analyze(args: &AnalyzeArgs, root: Option<&str>) -> Result<String> {
             VisualGraph::from_call_graph(
                 &mod_nodes,
                 &mod_defined,
-                &std::collections::HashMap::new(),
+                &pycg_rs::FxHashMap::default(),
                 &mod_uses,
                 &mod_options,
             )

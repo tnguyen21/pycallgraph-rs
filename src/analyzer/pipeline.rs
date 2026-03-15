@@ -11,7 +11,7 @@ impl CallGraph {
 
 impl AnalysisSession {
     pub(super) fn new(filenames: &[String], root: Option<&str>) -> Self {
-        let mut module_to_filename = HashMap::new();
+        let mut module_to_filename = FxHashMap::default();
         for filename in filenames {
             let mod_name = get_module_name(filename, root);
             module_to_filename.insert(mod_name, filename.clone());
@@ -20,20 +20,20 @@ impl AnalysisSession {
         Self {
             graph: CallGraph {
                 nodes_arena: Vec::new(),
-                nodes_by_name: HashMap::new(),
-                defines_edges: HashMap::new(),
-                uses_edges: HashMap::new(),
-                defined: HashSet::new(),
+                nodes_by_name: FxHashMap::default(),
+                defines_edges: FxHashMap::default(),
+                uses_edges: FxHashMap::default(),
+                defined: FxHashSet::default(),
                 diagnostics: AnalysisDiagnostics::default(),
                 module_to_filename,
             },
-            node_ids_by_key: HashMap::new(),
-            scopes: HashMap::new(),
-            function_returns: HashMap::new(),
+            node_ids_by_key: FxHashMap::default(),
+            scopes: FxHashMap::default(),
+            function_returns: FxHashMap::default(),
             function_returns_changed: false,
-            class_base_ast_info: HashMap::new(),
-            class_base_nodes: HashMap::new(),
-            mro: HashMap::new(),
+            class_base_ast_info: FxHashMap::default(),
+            class_base_nodes: FxHashMap::default(),
+            mro: FxHashMap::default(),
             filenames: filenames.to_vec(),
             root: root.map(|s| s.to_string()),
             module_name: String::new(),

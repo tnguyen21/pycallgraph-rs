@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://tnguyen21.github.io/pycg-rs/schemas/pycg-path-v1.schema.json",
+  "$id": "https://nwyin.github.io/pycg-rs/schemas/pycg-path-v1.schema.json",
   "title": "pycg-rs path query output v1",
   "oneOf": [
     {

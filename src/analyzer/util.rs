@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use crate::FxHashSet;
 use std::path::Path;
 
 use ruff_python_ast::*;
@@ -18,7 +18,7 @@ pub(super) fn get_ast_node_name(expr: &Expr) -> String {
 }
 
 /// Collect all Name identifiers from an assignment target expression.
-pub(super) fn collect_target_names_from_expr(target: &Expr, names: &mut HashSet<String>) {
+pub(super) fn collect_target_names_from_expr(target: &Expr, names: &mut FxHashSet<String>) {
     match target {
         Expr::Name(n) => {
             names.insert(n.id.to_string());

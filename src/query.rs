@@ -1,7 +1,8 @@
 use crate::analyzer::{CallGraph, ExternalReferenceKind};
 use crate::node::{Flavor, Node, NodeId};
 use serde::Serialize;
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use crate::{FxHashMap, FxHashSet};
+use std::collections::{BTreeMap, VecDeque};
 use std::fmt::Write;
 use std::path::{Path, PathBuf};
 
@@ -691,8 +692,8 @@ fn path_query(source: &str, target: &str, match_mode: MatchMode) -> PathQuery {
 
 fn collect_query_diagnostics(
     cg: &CallGraph,
-    relevant_source_ids: &HashSet<NodeId>,
-    relevant_paths: &HashSet<String>,
+    relevant_source_ids: &FxHashSet<NodeId>,
+    relevant_paths: &FxHashSet<String>,
     formatter: &PathFormatter,
 ) -> QueryDiagnostics {
     let mut warnings: Vec<Warning> = Vec::new();
@@ -701,12 +702,12 @@ fn collect_query_diagnostics(
     let mut external_references: Vec<ExternalReference> = Vec::new();
     let mut approximations: Vec<Approximation> = Vec::new();
 
-    let relevant_source_names: HashSet<String> = relevant_source_ids
+    let relevant_source_names: FxHashSet<String> = relevant_source_ids
         .iter()
         .map(|id| cg.nodes_arena[*id].get_name())
         .collect();
 
-    let mut unresolved_suppressions: HashSet<(String, String)> = HashSet::new();
+    let mut unresolved_suppressions: FxHashSet<(String, String)> = FxHashSet::default();
     for diagnostic in &cg.diagnostics.external_references {
         let formatted_path = diagnostic
             .source_filename
@@ -769,7 +770,7 @@ fn collect_query_diagnostics(
         });
 
         let mut concrete_groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
-        let mut unresolved_seen: HashSet<String> = HashSet::new();
+        let mut unresolved_seen: FxHashSet<String> = FxHashSet::default();
 
         for target_id in targets {
             let target = &cg.nodes_arena[target_id];
@@ -923,7 +924,7 @@ pub fn symbols_in(
                 .iter()
                 .filter_map(|id| symbol_ref(&cg.nodes_arena[*id], &formatter))
                 .collect();
-            let relevant_paths: HashSet<String> = symbols
+            let relevant_paths: FxHashSet<String> = symbols
                 .iter()
                 .filter_map(|symbol| {
                     symbol
@@ -946,7 +947,7 @@ pub fn symbols_in(
         }
         QueryGraphMode::Module => {
             let (nodes, _uses, defined) = cg.derive_module_graph();
-            let mut relevant_ids = HashSet::new();
+            let mut relevant_ids = FxHashSet::default();
             let mut symbols = Vec::new();
             for id in defined {
                 let node = &nodes[id];
@@ -976,7 +977,7 @@ pub fn symbols_in(
                 }));
             }
 
-            let relevant_paths: HashSet<String> = symbols
+            let relevant_paths: FxHashSet<String> = symbols
                 .iter()
                 .filter_map(|symbol| {
                     symbol
@@ -986,7 +987,7 @@ pub fn symbols_in(
                 })
                 .collect();
             let diagnostics =
-                collect_query_diagnostics(cg, &HashSet::new(), &relevant_paths, &formatter);
+                collect_query_diagnostics(cg, &FxHashSet::default(), &relevant_paths, &formatter);
             QueryResponse(QueryResponseInner::SymbolsIn(QueryDocument::Ok {
                 query: target_query(target, target_kind, graph_mode),
                 payload: symbols,
@@ -1011,7 +1012,7 @@ pub fn summary(
             diagnostics,
         })) => {
             let mut symbol_counts = BTreeMap::new();
-            let mut file_count = HashSet::new();
+            let mut file_count = FxHashSet::default();
             for symbol in &payload {
                 *symbol_counts.entry(symbol.kind.clone()).or_insert(0) += 1;
                 if let Some(location) = &symbol.location {
@@ -1019,7 +1020,7 @@ pub fn summary(
                 }
             }
 
-            let symbol_names: HashSet<String> = payload
+            let symbol_names: FxHashSet<String> = payload
                 .iter()
                 .map(|symbol| symbol.canonical_name.clone())
                 .collect();
@@ -1055,8 +1056,8 @@ pub fn summary(
             }
 
             let symbol_stats = if include_stats && graph_mode == QueryGraphMode::Symbol {
-                let mut caller_counts: HashMap<String, usize> = HashMap::new();
-                let mut callee_counts: HashMap<String, usize> = HashMap::new();
+                let mut caller_counts: FxHashMap<String, usize> = FxHashMap::default();
+                let mut callee_counts: FxHashMap<String, usize> = FxHashMap::default();
 
                 for (source, targets) in &cg.uses_edges {
                     let source_name = cg.nodes_arena[*source].get_name();
@@ -1150,11 +1151,11 @@ pub fn callees(
                 })
                 .collect();
             edges.sort_by(|a, b| a.target.canonical_name.cmp(&b.target.canonical_name));
-            let relevant_ids = HashSet::from([source_id]);
+            let relevant_ids = FxHashSet::from_iter([source_id]);
             let relevant_paths = node
                 .location
                 .as_ref()
-                .map(|location| HashSet::from([location.path.clone()]))
+                .map(|location| FxHashSet::from_iter([location.path.clone()]))
                 .unwrap_or_default();
             let diagnostics =
                 collect_query_diagnostics(cg, &relevant_ids, &relevant_paths, &formatter);
@@ -1182,7 +1183,7 @@ pub fn callers(
         Ok(target_id) => {
             let node = symbol_ref(&cg.nodes_arena[target_id], &formatter)
                 .expect("resolved node should be public");
-            let mut relevant_ids = HashSet::new();
+            let mut relevant_ids = FxHashSet::default();
             let mut edges: Vec<IncomingEdge> = cg
                 .uses_edges
                 .iter()
@@ -1198,7 +1199,7 @@ pub fn callers(
                 })
                 .collect();
             edges.sort_by(|a, b| a.source.canonical_name.cmp(&b.source.canonical_name));
-            let relevant_paths: HashSet<String> = edges
+            let relevant_paths: FxHashSet<String> = edges
                 .iter()
                 .filter_map(|edge| {
                     edge.source
@@ -1233,7 +1234,7 @@ pub fn neighbors(
         Ok(node_id) => {
             let node = symbol_ref(&cg.nodes_arena[node_id], &formatter)
                 .expect("resolved node should be public");
-            let mut relevant_ids = HashSet::from([node_id]);
+            let mut relevant_ids = FxHashSet::from_iter([node_id]);
             let mut incoming = Vec::new();
             for (source_id, targets) in &cg.uses_edges {
                 if !cg.defined.contains(source_id) || !targets.contains(&node_id) {
@@ -1266,7 +1267,7 @@ pub fn neighbors(
             }
             incoming.sort_by(|a, b| a.source.canonical_name.cmp(&b.source.canonical_name));
             outgoing.sort_by(|a, b| a.target.canonical_name.cmp(&b.target.canonical_name));
-            let relevant_paths: HashSet<String> = incoming
+            let relevant_paths: FxHashSet<String> = incoming
                 .iter()
                 .filter_map(|edge| {
                     edge.source
@@ -1324,8 +1325,8 @@ pub fn path(
     };
 
     let mut queue = VecDeque::from([source_id]);
-    let mut visited = HashSet::from([source_id]);
-    let mut prev: HashMap<NodeId, NodeId> = HashMap::new();
+    let mut visited = FxHashSet::from_iter([source_id]);
+    let mut prev: FxHashMap<NodeId, NodeId> = FxHashMap::default();
 
     while let Some(current) = queue.pop_front() {
         if current == target_id {
@@ -1386,8 +1387,8 @@ pub fn path(
             target: cg.nodes_arena[pair[1]].get_name(),
         })
         .collect();
-    let relevant_ids: HashSet<NodeId> = node_ids.iter().copied().collect();
-    let relevant_paths: HashSet<String> = nodes
+    let relevant_ids: FxHashSet<NodeId> = node_ids.iter().copied().collect();
+    let relevant_paths: FxHashSet<String> = nodes
         .iter()
         .filter_map(|node| node.location.as_ref().map(|location| location.path.clone()))
         .collect();

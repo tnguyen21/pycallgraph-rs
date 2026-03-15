@@ -2,8 +2,8 @@ use super::*;
 
 impl AnalysisSession {
     /// Gather scope information by walking the cached AST.
-    pub(super) fn build_scopes(module: &ModModule, module_ns: &str) -> HashMap<String, ScopeInfo> {
-        let mut scopes: HashMap<String, ScopeInfo> = HashMap::new();
+    pub(super) fn build_scopes(module: &ModModule, module_ns: &str) -> FxHashMap<String, ScopeInfo> {
+        let mut scopes: FxHashMap<String, ScopeInfo> = FxHashMap::default();
 
         let mut module_scope = ScopeInfo::new("");
         Self::collect_scope_defs(&module.body, &mut module_scope);
@@ -13,7 +13,7 @@ impl AnalysisSession {
         scopes
     }
 
-    pub(super) fn merge_scopes(&mut self, scopes: &HashMap<String, ScopeInfo>) {
+    pub(super) fn merge_scopes(&mut self, scopes: &FxHashMap<String, ScopeInfo>) {
         for (ns, sc) in scopes {
             if let Some(existing) = self.scopes.get_mut(ns.as_str()) {
                 for (name, vs) in &sc.defs {
@@ -136,7 +136,7 @@ impl AnalysisSession {
     fn collect_nested_scopes(
         stmts: &[Stmt],
         parent_ns: &str,
-        scopes: &mut HashMap<String, ScopeInfo>,
+        scopes: &mut FxHashMap<String, ScopeInfo>,
     ) {
         for stmt in stmts {
             match stmt {

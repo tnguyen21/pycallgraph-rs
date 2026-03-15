@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use crate::{FxHashMap, FxHashSet};
 
 // ---------------------------------------------------------------------------
 // ValueSet — compact abstract-value set for name bindings
@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 ///
 /// Represents the set of all possible pointees for a name at a given program
 /// point.  Designed to stay small in the common case (single binding), so a
-/// plain `Vec` with dedup is preferred over a full `HashSet`.
+/// plain `Vec` with dedup is preferred over a full `FxHashSet`.
 ///
 /// # Invariants
 /// * No duplicate NodeIds are stored.
@@ -83,17 +83,17 @@ pub struct Scope {
     /// The fully qualified name of this scope (e.g., "module.Class.method").
     pub name: String,
     /// Names defined (bound) in this scope.
-    pub defs: HashMap<String, Option<String>>,
+    pub defs: FxHashMap<String, Option<String>>,
     /// Names that are local-only (assigned in this scope).
-    pub locals: HashSet<String>,
+    pub locals: FxHashSet<String>,
 }
 
 impl Scope {
     pub fn new(name: &str) -> Self {
         Self {
             name: name.to_string(),
-            defs: HashMap::new(),
-            locals: HashSet::new(),
+            defs: FxHashMap::default(),
+            locals: FxHashSet::default(),
         }
     }
 

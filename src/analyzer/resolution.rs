@@ -279,7 +279,7 @@ impl AnalysisSession {
                 }
             }
             Expr::Dict(node) => {
-                let mut items = HashMap::new();
+                let mut items = FxHashMap::default();
                 for item in &node.items {
                     let Some(ref key) = item.key else {
                         continue;
@@ -372,7 +372,7 @@ impl AnalysisSession {
             .map(|(&cls_id, refs)| (cls_id, refs.clone()))
             .collect();
 
-        let mut class_base_nodes: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
+        let mut class_base_nodes: FxHashMap<NodeId, Vec<NodeId>> = FxHashMap::default();
 
         for (cls_id, refs) in &class_refs {
             let mut bases = Vec::new();

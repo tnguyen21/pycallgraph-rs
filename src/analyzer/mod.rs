@@ -21,7 +21,7 @@ use mro::resolve_mro;
 pub use util::get_module_name;
 use util::{collect_target_names_from_expr, get_ast_node_name, literal_key_from_expr};
 
-use std::collections::{HashMap, HashSet};
+use crate::{FxHashMap, FxHashSet};
 use std::ops::{Deref, DerefMut};
 
 use anyhow::{Context, Result};
@@ -45,14 +45,14 @@ use crate::scope::ValueSet;
 /// Bindings are unioned on rebind (no last-writer-wins).
 #[derive(Debug, Clone)]
 pub(super) struct ScopeInfo {
-    defs: HashMap<String, ValueSet>,
+    defs: FxHashMap<String, ValueSet>,
     /// Shallow container facts for locally-bound names/attributes.
     ///
     /// This tracks statically-known list/tuple/dict literal contents so that
     /// later `x[i]` / `x["k"]` expressions can resolve through the retrieved
     /// value instead of collapsing back to the container object.
-    containers: HashMap<String, ContainerFacts>,
-    locals: HashSet<String>,
+    containers: FxHashMap<String, ContainerFacts>,
+    locals: FxHashSet<String>,
     /// Statically-known `__all__` exports for this module scope.
     ///
     /// `Some(names)` when the module contains a top-level `__all__ = [...]`
@@ -62,7 +62,7 @@ pub(super) struct ScopeInfo {
     /// When `Some`, `handle_star_import` uses this as the definitive filter
     /// for `from mod import *`, allowing private names that are explicitly
     /// listed and excluding public names that are not.
-    all_exports: Option<HashSet<String>>,
+    all_exports: Option<FxHashSet<String>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -125,7 +125,7 @@ enum LiteralKey {
 #[derive(Debug, Clone)]
 enum ContainerFact {
     Sequence(Vec<ShallowValue>),
-    Mapping(HashMap<LiteralKey, ShallowValue>),
+    Mapping(FxHashMap<LiteralKey, ShallowValue>),
 }
 
 /// A small set of shallow container facts for a single binding.
@@ -191,14 +191,14 @@ impl ContainerFacts {
 impl ScopeInfo {
     fn new(_name: &str) -> Self {
         Self {
-            defs: HashMap::new(),
-            containers: HashMap::new(),
-            locals: HashSet::new(),
+            defs: FxHashMap::default(),
+            containers: FxHashMap::default(),
+            locals: FxHashSet::default(),
             all_exports: None,
         }
     }
 
-    fn from_names(_name: &str, identifiers: &HashSet<String>) -> Self {
+    fn from_names(_name: &str, identifiers: &FxHashSet<String>) -> Self {
         let defs = identifiers
             .iter()
             .map(|id| (id.clone(), ValueSet::empty()))
@@ -206,7 +206,7 @@ impl ScopeInfo {
         let locals = identifiers.clone();
         Self {
             defs,
-            containers: HashMap::new(),
+            containers: FxHashMap::default(),
             locals,
             all_exports: None,
         }
@@ -220,13 +220,13 @@ impl ScopeInfo {
 /// If any element is not a string literal (e.g. a variable reference or a
 /// computed expression) we conservatively return `None` so that callers fall
 /// back to the default privacy filter.
-fn extract_all_exports(expr: &Expr) -> Option<HashSet<String>> {
+fn extract_all_exports(expr: &Expr) -> Option<FxHashSet<String>> {
     let elts = match expr {
         Expr::List(l) => &l.elts,
         Expr::Tuple(t) => &t.elts,
         _ => return None,
     };
-    let mut names = HashSet::new();
+    let mut names = FxHashSet::default();
     for elt in elts {
         if let Expr::StringLiteral(s) = elt {
             names.insert(s.value.to_str().to_string());
@@ -249,21 +249,21 @@ pub struct CallGraph {
     pub nodes_arena: Vec<Node>,
     /// Short name -> list of node IDs (there may be several in different
     /// namespaces).
-    pub nodes_by_name: HashMap<String, Vec<NodeId>>,
+    pub nodes_by_name: FxHashMap<String, Vec<NodeId>>,
 
     // Edges -------------------------------------------------------------
-    pub defines_edges: HashMap<NodeId, HashSet<NodeId>>,
-    pub uses_edges: HashMap<NodeId, HashSet<NodeId>>,
+    pub defines_edges: FxHashMap<NodeId, FxHashSet<NodeId>>,
+    pub uses_edges: FxHashMap<NodeId, FxHashSet<NodeId>>,
 
     /// Which nodes have been marked *defined* (have a defines edge from
     /// them, or were created as wildcard nodes).
-    pub defined: HashSet<NodeId>,
+    pub defined: FxHashSet<NodeId>,
 
     /// Analyzer-owned diagnostics that survive graph postprocessing.
     pub diagnostics: AnalysisDiagnostics,
 
     // File mapping ------------------------------------------------------
-    pub(super) module_to_filename: HashMap<String, String>,
+    pub(super) module_to_filename: FxHashMap<String, String>,
 }
 
 /// Internal mutable analysis session.
@@ -273,24 +273,24 @@ pub struct CallGraph {
 #[derive(Debug)]
 pub(super) struct AnalysisSession {
     pub(super) graph: CallGraph,
-    node_ids_by_key: HashMap<NodeKey, NodeId>,
+    node_ids_by_key: FxHashMap<NodeKey, NodeId>,
 
     // Scope tracking (persistent across files/passes) -------------------
-    pub(super) scopes: HashMap<String, ScopeInfo>,
+    pub(super) scopes: FxHashMap<String, ScopeInfo>,
 
     // Class information -------------------------------------------------
     /// Pass 1: class NodeId -> list of base-class AST info (stored as
     /// (namespace, name) pairs extracted from AST nodes).
-    pub(super) class_base_ast_info: HashMap<NodeId, Vec<BaseClassRef>>,
+    pub(super) class_base_ast_info: FxHashMap<NodeId, Vec<BaseClassRef>>,
     /// Pass 2: class NodeId -> resolved base NodeIds.
-    pub(super) class_base_nodes: HashMap<NodeId, Vec<NodeId>>,
+    pub(super) class_base_nodes: FxHashMap<NodeId, Vec<NodeId>>,
     /// MRO for each class.
-    pub(super) mro: HashMap<NodeId, Vec<NodeId>>,
+    pub(super) mro: FxHashMap<NodeId, Vec<NodeId>>,
 
     /// Collected return values per function node, used for return-value propagation.
     /// Maps function/method NodeId -> set of NodeIds that the function may return.
     /// Populated during `visit_stmt(Return)` and consumed in `visit_call`.
-    pub(super) function_returns: HashMap<NodeId, HashSet<NodeId>>,
+    pub(super) function_returns: FxHashMap<NodeId, FxHashSet<NodeId>>,
     /// Set during a propagation pass when a function gains a newly-discovered
     /// return value. Used to detect fixpoint convergence without cloning the
     /// entire `function_returns` map every pass.
@@ -320,7 +320,7 @@ struct CachedFile {
     module_name: String,
     module: ModModule,
     line_index: LineIndex,
-    scopes: HashMap<String, ScopeInfo>,
+    scopes: FxHashMap<String, ScopeInfo>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -1668,7 +1668,7 @@ impl AnalysisSession {
 
         // Ensure scope exists
         if !self.scopes.contains_key(&inner_ns) {
-            let mut names = HashSet::new();
+            let mut names = FxHashSet::default();
             if let Some(ref params) = node.parameters {
                 for p in &params.args {
                     names.insert(p.parameter.name.id.to_string());
@@ -1832,7 +1832,7 @@ impl AnalysisSession {
         };
         let inner_ns = format!("{parent_ns}.{label}");
         if !self.scopes.contains_key(&inner_ns) {
-            let mut target_names = HashSet::new();
+            let mut target_names = FxHashSet::default();
             for comp in generators {
                 collect_target_names_from_expr(&comp.target, &mut target_names);
             }
@@ -2028,7 +2028,7 @@ mod prepass_tests {
             .unwrap_or_else(|| panic!("node {exact_name} not found"))
     }
 
-    fn exact_uses(cg: &CallGraph, exact_name: &str) -> HashSet<String> {
+    fn exact_uses(cg: &CallGraph, exact_name: &str) -> FxHashSet<String> {
         let from_id = find_exact_node(cg, exact_name);
         cg.uses_edges
             .get(&from_id)
@@ -2110,7 +2110,7 @@ __all__ = ["public_name"]
 
         assert_eq!(
             scope.all_exports,
-            Some(HashSet::from([String::from("public_name")])),
+            Some(FxHashSet::from_iter([String::from("public_name")])),
             "__all__ should be collected from a literal assignment"
         );
     }
@@ -2207,13 +2207,13 @@ else:
         let mut session = AnalysisSession::new(&[], None);
         let mut existing = ScopeInfo::new("");
         existing.defs.insert("kept".to_string(), ValueSet::empty());
-        existing.all_exports = Some(HashSet::from([String::from("kept")]));
+        existing.all_exports = Some(FxHashSet::from_iter([String::from("kept")]));
         session.scopes.insert("pkg.mod".to_string(), existing);
 
         let mut incoming = ScopeInfo::new("");
         incoming.defs.insert("added".to_string(), ValueSet::empty());
 
-        session.merge_scopes(&HashMap::from([("pkg.mod".to_string(), incoming)]));
+        session.merge_scopes(&FxHashMap::from_iter([("pkg.mod".to_string(), incoming)]));
 
         let merged = session
             .scopes
@@ -2223,7 +2223,7 @@ else:
         assert!(merged.defs.contains_key("added"));
         assert_eq!(
             merged.all_exports,
-            Some(HashSet::from([String::from("kept")])),
+            Some(FxHashSet::from_iter([String::from("kept")])),
             "existing __all__ exports should not be overwritten by None"
         );
     }
@@ -2241,7 +2241,7 @@ else:
         session.scopes.insert("pkg.mod".to_string(), existing);
 
         let mut incoming = ScopeInfo::new("");
-        let mut mapping = HashMap::new();
+        let mut mapping = FxHashMap::default();
         mapping.insert(LiteralKey::String("k".to_string()), ShallowValue::default());
         let mut incoming_facts = ContainerFacts::default();
         incoming_facts.push(ContainerFact::Mapping(mapping));
@@ -2249,7 +2249,7 @@ else:
             .containers
             .insert("items".to_string(), incoming_facts);
 
-        session.merge_scopes(&HashMap::from([("pkg.mod".to_string(), incoming)]));
+        session.merge_scopes(&FxHashMap::from_iter([("pkg.mod".to_string(), incoming)]));
 
         let merged = session
             .scopes
@@ -2347,7 +2347,7 @@ class Product:
 mod visitor_tests {
     use super::*;
 
-    use std::collections::HashSet;
+    use crate::FxHashSet;
     use std::fs;
 
     use tempfile::tempdir;
@@ -2521,7 +2521,7 @@ def outer(cond, items, manager):
             .entry("kept".to_string())
             .or_default()
             .insert(keep_id);
-        existing.all_exports = Some(HashSet::from([String::from("kept")]));
+        existing.all_exports = Some(FxHashSet::from_iter([String::from("kept")]));
         session.scopes.insert("pkg".to_string(), existing);
 
         let mut incoming = ScopeInfo::new("pkg");
@@ -2531,7 +2531,7 @@ def outer(cond, items, manager):
             .or_default()
             .insert(extra_id);
 
-        let mut incoming_scopes = HashMap::new();
+        let mut incoming_scopes = FxHashMap::default();
         incoming_scopes.insert("pkg".to_string(), incoming);
 
         session.merge_scopes(&incoming_scopes);
@@ -2539,7 +2539,7 @@ def outer(cond, items, manager):
         let merged = session.scopes.get("pkg").expect("merged scope");
         assert_eq!(
             merged.all_exports.as_ref(),
-            Some(&HashSet::from([String::from("kept")])),
+            Some(&FxHashSet::from_iter([String::from("kept")])),
             "existing __all__ should not be cleared by an incoming scope without exports",
         );
         assert!(
@@ -2855,11 +2855,11 @@ def outer(posonly, /, arg, *va, kw, **kwarg):
         let mut session = AnalysisSession::new(&[], None);
 
         let mut existing = ScopeInfo::new("");
-        existing.all_exports = Some(HashSet::from([String::from("keep")]));
+        existing.all_exports = Some(FxHashSet::from_iter([String::from("keep")]));
         session.scopes.insert(String::from("pkg.mod"), existing);
 
         let mut incoming = ScopeInfo::new("");
-        incoming.all_exports = Some(HashSet::from([String::from("replace")]));
+        incoming.all_exports = Some(FxHashSet::from_iter([String::from("replace")]));
         session
             .scopes
             .get_mut("pkg.mod")
@@ -2867,13 +2867,13 @@ def outer(posonly, /, arg, *va, kw, **kwarg):
             .defs
             .insert(String::from("current"), ValueSet::empty());
 
-        let incoming_scopes = HashMap::from([(String::from("pkg.mod"), incoming)]);
+        let incoming_scopes = FxHashMap::from_iter([(String::from("pkg.mod"), incoming)]);
         session.merge_scopes(&incoming_scopes);
 
         let merged = session.scopes.get("pkg.mod").expect("merged scope");
         assert_eq!(
             merged.all_exports.as_ref(),
-            Some(&HashSet::from([String::from("keep")])),
+            Some(&FxHashSet::from_iter([String::from("keep")])),
             "existing __all__ should not be overwritten"
         );
     }

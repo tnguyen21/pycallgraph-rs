@@ -178,7 +178,7 @@ fn test_module_graph() {
     let vg = VisualGraph::from_call_graph(
         &mod_nodes,
         &mod_defined,
-        &std::collections::HashMap::new(),
+        &pycg_rs::FxHashMap::default(),
         &mod_uses,
         &opts,
     );
