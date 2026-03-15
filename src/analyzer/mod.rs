@@ -84,7 +84,7 @@ impl ExternalReferenceKind {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ExternalReferenceDiagnostic {
     pub source_canonical_name: String,
-    pub source_filename: Option<String>,
+    pub source_filename: Option<SymId>,
     pub source_line: Option<usize>,
     pub kind: ExternalReferenceKind,
     pub canonical_name: String,
@@ -253,7 +253,7 @@ pub struct CallGraph {
     pub diagnostics: AnalysisDiagnostics,
 
     // File mapping ------------------------------------------------------
-    pub(super) module_to_filename: FxHashMap<SymId, String>,
+    pub(super) module_to_filename: FxHashMap<SymId, SymId>,
 }
 
 /// Internal mutable analysis session.
@@ -291,7 +291,7 @@ pub(super) struct AnalysisSession {
 
     // Transient state (reset per file) ----------------------------------
     pub(super) module_name: SymId,
-    pub(super) filename: String,
+    pub(super) filename: SymId,
     pub(super) name_stack: Vec<SymId>,
     /// Cached FQN for each name_stack depth. `fqn_cache[i]` is the interned
     /// join of `name_stack[0..=i]` with `"."`. Avoids re-joining and
@@ -311,6 +311,7 @@ pub(super) enum BaseClassRef {
 
 struct CachedFile {
     filename: String,
+    filename_sym: SymId,
     module_name: SymId,
     module: ModModule,
     line_index: LineIndex,
@@ -344,12 +345,13 @@ impl AnalysisSession {
 
     fn visit_module(&mut self, module: &ModModule, line_index: &LineIndex) {
         let mod_name_str = self.graph.interner.resolve(self.module_name).to_owned();
-        debug!("Module {}, {}", mod_name_str, self.filename);
+        let filename_str = self.graph.interner.resolve(self.filename).to_owned();
+        debug!("Module {}, {}", mod_name_str, filename_str);
 
-        let fname = self.filename.clone();
+        let fname = self.filename;
         let module_node = self.get_node(Some(""), &mod_name_str, Flavor::Module);
         let line = line_index.line_index(module.range().start()).get();
-        self.associate_node(module_node, &fname, line);
+        self.associate_node(module_node, fname, line);
 
         let ns_sym = self.module_name;
         self.push_name(ns_sym);
@@ -440,7 +442,7 @@ impl AnalysisSession {
         debug!(
             "ClassDef {}, {}:{}",
             class_name,
-            self.filename,
+            self.graph.interner.resolve(self.filename),
             line_index.line_index(node.range().start()).get()
         );
 
@@ -456,7 +458,7 @@ impl AnalysisSession {
         }
 
         let line = line_index.line_index(node.range().start()).get();
-        self.associate_node(to_node, &self.filename.clone(), line);
+        self.associate_node(to_node, self.filename, line);
         self.set_value(&class_name, Some(to_node));
 
         self.class_stack.push(to_node);
@@ -517,7 +519,7 @@ impl AnalysisSession {
         debug!(
             "FunctionDef {}, {}:{}",
             func_name,
-            self.filename,
+            self.graph.interner.resolve(self.filename),
             line_index.line_index(node.range().start()).get()
         );
 
@@ -536,8 +538,7 @@ impl AnalysisSession {
         }
 
         let line = line_index.line_index(node.range().start()).get();
-        let filename = self.filename.clone();
-        self.associate_node(to_node, &filename, line);
+        self.associate_node(to_node, self.filename, line);
         self.set_value(&func_name, Some(to_node));
 
         // Decorator-chain call flow: each concrete (non-wildcard) decorator receives
@@ -733,7 +734,7 @@ impl AnalysisSession {
     fn visit_import(&mut self, node: &StmtImport, line_index: &LineIndex) {
         debug!(
             "Import, {}:{}",
-            self.filename,
+            self.graph.interner.resolve(self.filename),
             line_index.line_index(node.range().start()).get()
         );
 
@@ -761,7 +762,7 @@ impl AnalysisSession {
     fn visit_import_from(&mut self, node: &StmtImportFrom, line_index: &LineIndex) {
         debug!(
             "ImportFrom, {}:{}",
-            self.filename,
+            self.graph.interner.resolve(self.filename),
             line_index.line_index(node.range().start()).get()
         );
 
@@ -1057,7 +1058,7 @@ impl AnalysisSession {
     fn visit_for(&mut self, node: &StmtFor, line_index: &LineIndex) {
         debug!(
             "For-loop, {}:{}",
-            self.filename,
+            self.graph.interner.resolve(self.filename),
             line_index.line_index(node.range().start()).get()
         );
 
@@ -1266,8 +1267,7 @@ impl AnalysisSession {
             let to_node = self.get_node(Some(&ns), &alias_name, Flavor::Name);
             self.add_defines_edge(from_node, Some(to_node));
             let line = line_index.line_index(node.range().start()).get();
-            let fname = self.filename.clone();
-            self.associate_node(to_node, &fname, line);
+            self.associate_node(to_node, self.filename, line);
             self.set_value(&alias_name, Some(to_node));
         }
         self.visit_expr(&node.value, line_index);
@@ -2256,7 +2256,7 @@ else:
     fn get_node_reuses_existing_id_and_upgrades_flavor() {
         let filename = "pkg/mod.py".to_string();
         let mut session = AnalysisSession::new(std::slice::from_ref(&filename), None);
-        session.filename = filename;
+        session.filename = session.graph.interner.intern(&filename);
 
         let generic = session.get_node(Some("pkg.mod"), "thing", Flavor::Namespace);
         let upgraded = session.get_node(Some("pkg.mod"), "thing", Flavor::Function);
@@ -2374,7 +2374,7 @@ mod visitor_tests {
 
     fn enter_function(session: &mut AnalysisSession, module_ns: &str, fn_name: &str) {
         session.module_name = session.graph.interner.intern(module_ns);
-        session.filename = format!("{module_ns}.py");
+        session.filename = session.graph.interner.intern(&format!("{module_ns}.py"));
         let ns_sym = session.graph.interner.intern(module_ns);
         let fn_sym = session.graph.interner.intern(fn_name);
         let fn_ns_str = format!("{module_ns}.{fn_name}");
@@ -2562,7 +2562,7 @@ def outer(cond, items, manager):
     #[test]
     fn get_node_reuses_ids_and_upgrades_flavor() {
         let mut session = AnalysisSession::new(&[], None);
-        session.filename = "fixture.py".to_string();
+        session.filename = session.graph.interner.intern("fixture.py");
 
         let first = session.get_node(Some("pkg"), "thing", Flavor::Namespace);
         let second = session.get_node(Some("pkg"), "thing", Flavor::Method);
@@ -2903,7 +2903,7 @@ def outer(posonly, /, arg, *va, kw, **kwarg):
     #[test]
     fn get_node_reuses_identity_and_only_upgrades_flavor() {
         let mut session = AnalysisSession::new(&[], None);
-        session.filename = String::from("fixture.py");
+        session.filename = session.graph.interner.intern("fixture.py");
 
         let id = session.get_node(Some("pkg.mod"), "thing", Flavor::Namespace);
         let upgraded = session.get_node(Some("pkg.mod"), "thing", Flavor::Method);

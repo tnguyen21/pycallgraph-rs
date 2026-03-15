@@ -10,7 +10,7 @@ impl AnalysisSession {
         let source = &self.nodes_arena[source_id];
         let diagnostic = ExternalReferenceDiagnostic {
             source_canonical_name: source.get_name(&self.graph.interner).to_string(),
-            source_filename: source.filename.clone(),
+            source_filename: source.filename,
             source_line: source.line,
             kind,
             canonical_name,
@@ -45,15 +45,14 @@ impl AnalysisSession {
             return id;
         }
 
-        let filename = if let Some(ns) = namespace {
-            let ns_sym = self.graph.interner.intern(ns);
-            if let Some(f) = self.module_to_filename.get(&ns_sym) {
-                Some(f.clone())
+        let filename = if let Some(ns_sym) = ns_sym {
+            if let Some(&f) = self.module_to_filename.get(&ns_sym) {
+                Some(f)
             } else {
-                Some(self.filename.clone())
+                Some(self.filename)
             }
         } else {
-            Some(self.filename.clone())
+            Some(self.filename)
         };
 
         let fqn_sym = match ns_sym {
@@ -122,13 +121,13 @@ impl AnalysisSession {
         }
 
         let filename = if let Some(ns_sym) = namespace {
-            if let Some(f) = self.module_to_filename.get(&ns_sym) {
-                Some(f.clone())
+            if let Some(&f) = self.module_to_filename.get(&ns_sym) {
+                Some(f)
             } else {
-                Some(self.filename.clone())
+                Some(self.filename)
             }
         } else {
-            Some(self.filename.clone())
+            Some(self.filename)
         };
 
         let fqn = match namespace {
@@ -187,8 +186,8 @@ impl AnalysisSession {
         self.get_node(Some(&ns), &name, Flavor::Namespace)
     }
 
-    pub(super) fn associate_node(&mut self, node_id: NodeId, filename: &str, line: usize) {
-        self.nodes_arena[node_id].filename = Some(filename.to_string());
+    pub(super) fn associate_node(&mut self, node_id: NodeId, filename: SymId, line: usize) {
+        self.nodes_arena[node_id].filename = Some(filename);
         self.nodes_arena[node_id].line = Some(line);
     }
 

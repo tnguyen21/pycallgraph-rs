@@ -68,8 +68,8 @@ pub struct Node {
     pub fqn: SymId,
     /// The flavor of this node.
     pub flavor: Flavor,
-    /// The filename where this node is defined.
-    pub filename: Option<String>,
+    /// The filename where this node is defined (interned).
+    pub filename: Option<SymId>,
     /// The line number where this node is defined.
     pub line: Option<usize>,
 }
@@ -86,8 +86,8 @@ impl Node {
         }
     }
 
-    pub fn with_location(mut self, filename: &str, line: usize) -> Self {
-        self.filename = Some(filename.to_string());
+    pub fn with_location(mut self, filename: SymId, line: usize) -> Self {
+        self.filename = Some(filename);
         self.line = Some(line);
         self
     }

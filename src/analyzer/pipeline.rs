@@ -16,7 +16,8 @@ impl AnalysisSession {
         for filename in filenames {
             let mod_name = get_module_name(filename, root);
             let mod_sym = interner.intern(&mod_name);
-            module_to_filename.insert(mod_sym, filename.clone());
+            let file_sym = interner.intern(filename);
+            module_to_filename.insert(mod_sym, file_sym);
         }
 
         let empty_sym = interner.intern("");
@@ -42,7 +43,7 @@ impl AnalysisSession {
             filenames: filenames.to_vec(),
             root: root.map(|s| s.to_string()),
             module_name: empty_sym,
-            filename: String::new(),
+            filename: empty_sym,
             name_stack: Vec::new(),
             fqn_cache: Vec::new(),
             scope_stack: Vec::new(),
@@ -115,8 +116,10 @@ impl AnalysisSession {
             };
             let line_index = LineIndex::from_source_text(&content);
             let scopes = Self::build_scopes(&module, &module_name_str, &mut self.graph.interner);
+            let filename_sym = self.graph.interner.intern(filename);
             cached_files.push(CachedFile {
                 filename: filename.clone(),
+                filename_sym,
                 module_name,
                 module,
                 line_index,
@@ -128,12 +131,12 @@ impl AnalysisSession {
 
     /// Analyze a single Python source file.
     fn process_one(&mut self, cached_file: &CachedFile) {
-        self.filename = cached_file.filename.clone();
+        self.filename = cached_file.filename_sym;
         self.module_name = cached_file.module_name;
 
         self.visit_module(&cached_file.module, &cached_file.line_index);
 
         self.module_name = self.graph.interner.intern("");
-        self.filename.clear();
+        self.filename = self.graph.interner.intern("");
     }
 }

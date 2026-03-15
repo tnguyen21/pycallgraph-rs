@@ -1,3 +1,4 @@
+use crate::intern::SymId;
 use crate::{FxHashMap, FxHashSet};
 
 // log::info is used transitively via add_uses_edge/add_defines_edge in super
@@ -350,12 +351,11 @@ impl super::CallGraph {
     pub fn derive_module_graph(
         &mut self,
     ) -> (Vec<Node>, FxHashMap<NodeId, FxHashSet<NodeId>>, FxHashSet<NodeId>) {
-        // Build filename -> module name mapping, owning the strings to avoid
-        // borrowing interner across the entire function.
-        let filename_to_module: FxHashMap<String, String> = self
+        // Build filename_sym -> module_name_sym mapping (all SymIds, no allocs).
+        let filename_to_module: FxHashMap<SymId, SymId> = self
             .module_to_filename
             .iter()
-            .map(|(&m, f)| (f.clone(), self.interner.resolve(m).to_owned()))
+            .map(|(&m, &f)| (f, m))
             .collect();
 
         let mut module_ids: FxHashMap<String, NodeId> = FxHashMap::default();
@@ -375,24 +375,25 @@ impl super::CallGraph {
                 id
             };
 
-        let mod_entries: Vec<(String, String)> = self
+        let mod_entries: Vec<(SymId, SymId)> = self
             .module_to_filename
             .iter()
-            .map(|(&m, f)| (self.interner.resolve(m).to_owned(), f.clone()))
+            .map(|(&m, &f)| (m, f))
             .collect();
-        for (mod_name, filename) in &mod_entries {
-            let id = ensure_module(mod_name, &mut new_nodes, &mut self.interner);
-            new_nodes[id].filename = Some(filename.clone());
+        for (mod_sym, file_sym) in &mod_entries {
+            let mod_name = self.interner.resolve(*mod_sym).to_owned();
+            let id = ensure_module(&mod_name, &mut new_nodes, &mut self.interner);
+            new_nodes[id].filename = Some(*file_sym);
         }
 
         let mut module_edges: FxHashMap<NodeId, FxHashSet<NodeId>> = FxHashMap::default();
 
         for (&src, targets) in &self.uses_edges {
             let src_node = &self.nodes_arena[src];
-            let src_mod = match src_node.filename.as_deref() {
-                Some(f) => filename_to_module.get(f).map(|s| s.as_str()),
-                None => None,
-            };
+            let src_mod: Option<String> = src_node
+                .filename
+                .and_then(|f| filename_to_module.get(&f))
+                .map(|&m| self.interner.resolve(m).to_owned());
             let Some(src_mod) = src_mod else { continue };
 
             for &tgt in targets {
@@ -403,9 +404,8 @@ impl super::CallGraph {
                 } else {
                     tgt_node
                         .filename
-                        .as_deref()
-                        .and_then(|f| filename_to_module.get(f))
-                        .map(|s| s.to_string())
+                        .and_then(|f| filename_to_module.get(&f))
+                        .map(|&m| self.interner.resolve(m).to_string())
                 };
 
                 let Some(tgt_mod) = tgt_mod else { continue };
@@ -413,7 +413,7 @@ impl super::CallGraph {
                     continue;
                 }
 
-                let src_mid = ensure_module(src_mod, &mut new_nodes, &mut self.interner);
+                let src_mid = ensure_module(&src_mod, &mut new_nodes, &mut self.interner);
                 let tgt_mid = ensure_module(&tgt_mod, &mut new_nodes, &mut self.interner);
                 module_edges.entry(src_mid).or_default().insert(tgt_mid);
             }
@@ -482,7 +482,8 @@ mod tests {
     fn contract_nonexistents_records_external_references_before_wildcarding() {
         let mut session = AnalysisSession::new(&[], None);
         let caller = session.get_node(Some("app"), "caller", Flavor::Function);
-        session.associate_node(caller, "app.py", 12);
+        let app_py = session.graph.interner.intern("app.py");
+        session.associate_node(caller, app_py, 12);
         let external = session.get_node(Some("numpy"), "array", Flavor::ImportedItem);
         session.add_uses_edge(caller, external);
 
@@ -491,7 +492,10 @@ mod tests {
         assert_eq!(session.graph.diagnostics.external_references.len(), 1);
         let diagnostic = &session.graph.diagnostics.external_references[0];
         assert_eq!(diagnostic.source_canonical_name, "app.caller");
-        assert_eq!(diagnostic.source_filename.as_deref(), Some("app.py"));
+        assert_eq!(
+            diagnostic.source_filename.map(|s| session.graph.interner.resolve(s)),
+            Some("app.py")
+        );
         assert_eq!(diagnostic.source_line, Some(12));
         assert_eq!(diagnostic.kind.as_str(), "import");
         assert_eq!(diagnostic.canonical_name, "numpy.array");

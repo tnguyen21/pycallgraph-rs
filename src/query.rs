@@ -585,8 +585,8 @@ fn symbol_ref(node: &Node, formatter: &PathFormatter, interner: &Interner) -> Op
         kind,
         name,
         namespace,
-        location: node.filename.as_ref().map(|path| Location {
-            path: formatter.format_location(path),
+        location: node.filename.map(|sym| Location {
+            path: formatter.format_location(interner.resolve(sym)),
             line: node.line,
         }),
     })
@@ -715,8 +715,7 @@ fn collect_query_diagnostics(
     for diagnostic in &cg.diagnostics.external_references {
         let formatted_path = diagnostic
             .source_filename
-            .as_ref()
-            .map(|path| formatter.format_location(path));
+            .map(|sym| formatter.format_location(cg.interner.resolve(sym)));
         if !relevant_source_names.contains(&diagnostic.source_canonical_name)
             && !formatted_path
                 .as_ref()
@@ -755,8 +754,7 @@ fn collect_query_diagnostics(
         let source_name = source_node.get_name(&cg.interner).to_string();
         let path = source_node
             .filename
-            .as_ref()
-            .map(|filename| formatter.format_location(filename));
+            .map(|sym| formatter.format_location(cg.interner.resolve(sym)));
         let line = source_node.line;
         let mut targets: Vec<NodeId> = cg
             .uses_edges
@@ -907,8 +905,7 @@ pub fn symbols_in(
                 .filter(|id| match target_kind {
                     TargetKind::Path => cg.nodes_arena[*id]
                         .filename
-                        .as_ref()
-                        .is_some_and(|path| path_matches_target(path, target, &formatter)),
+                        .is_some_and(|sym| path_matches_target(cg.interner.resolve(sym), target, &formatter)),
                     TargetKind::Module => {
                         module_matches_target(&cg.nodes_arena[*id].get_name(&cg.interner), target)
                     }
@@ -960,8 +957,7 @@ pub fn symbols_in(
                 let matches = match target_kind {
                     TargetKind::Path => node
                         .filename
-                        .as_ref()
-                        .is_some_and(|path| path_matches_target(path, target, &formatter)),
+                        .is_some_and(|sym| path_matches_target(cg.interner.resolve(sym), target, &formatter)),
                     TargetKind::Module => module_matches_target(&node.get_name(&cg.interner), target),
                 };
                 if matches {

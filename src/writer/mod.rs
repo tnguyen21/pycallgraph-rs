@@ -441,11 +441,11 @@ fn node_name_and_namespace(node: &Node, canonical_name: &str, interner: &Interne
 fn diagnostic_location(
     node: &Node,
     path_formatter: &PathFormatter,
+    interner: &Interner,
 ) -> (Option<String>, Option<usize>) {
     (
         node.filename
-            .as_ref()
-            .map(|filename| path_formatter.format_location(filename)),
+            .map(|sym| path_formatter.format_location(interner.resolve(sym))),
         node.line,
     )
 }
@@ -477,8 +477,7 @@ fn build_json_diagnostics(
         .filter_map(|(node_id, output_id)| {
             nodes_arena[*node_id]
                 .filename
-                .as_ref()
-                .map(|filename| (path_formatter.format_location(filename), output_id.clone()))
+                .map(|sym| (path_formatter.format_location(interner.resolve(sym)), output_id.clone()))
         })
         .collect();
     let mut unresolved_suppressions: FxHashSet<(String, String)> = FxHashSet::default();
@@ -490,8 +489,7 @@ fn build_json_diagnostics(
                 .cloned(),
             JsonGraphMode::Module => diagnostic
                 .source_filename
-                .as_ref()
-                .map(|filename| path_formatter.format_location(filename))
+                .map(|sym| path_formatter.format_location(interner.resolve(sym)))
                 .and_then(|path| path_to_output_id.get(&path).cloned()),
         };
         let Some(source) = source else {
@@ -513,8 +511,7 @@ fn build_json_diagnostics(
             canonical_name: diagnostic.canonical_name.clone(),
             path: diagnostic
                 .source_filename
-                .as_ref()
-                .map(|filename| path_formatter.format_location(filename)),
+                .map(|sym| path_formatter.format_location(interner.resolve(sym))),
             line: diagnostic.source_line,
         });
     }
@@ -530,7 +527,7 @@ fn build_json_diagnostics(
             continue;
         };
         let source_node = &nodes_arena[source];
-        let (path, line) = diagnostic_location(source_node, path_formatter);
+        let (path, line) = diagnostic_location(source_node, path_formatter, interner);
 
         let mut targets: Vec<NodeId> = uses_edges
             .get(&source)
@@ -716,8 +713,8 @@ pub fn write_json(
         let n = &nodes_arena[id];
         let canonical_name = n.get_name(interner).to_string();
         let (name, namespace) = node_name_and_namespace(n, &canonical_name, interner);
-        if let Some(ref f) = n.filename {
-            files.insert(f.as_str());
+        if let Some(f) = n.filename {
+            files.insert(interner.resolve(f));
         }
         let kind = public_kind(n).unwrap_or_else(|| "unknown".to_string());
         *node_kind_counts.entry(kind.clone()).or_insert(0) += 1;
@@ -730,8 +727,8 @@ pub fn write_json(
             canonical_name,
             name,
             namespace,
-            location: n.filename.as_ref().map(|filename| JsonLocation {
-                path: path_formatter.format_location(filename),
+            location: n.filename.map(|sym| JsonLocation {
+                path: path_formatter.format_location(interner.resolve(sym)),
                 line: n.line,
             }),
         });
@@ -857,11 +854,13 @@ mod tests {
         let fqn_foo = interner.intern("pkg.Foo");
         let fqn_bar = interner.intern("pkg.bar");
         let fqn_baz = interner.intern("other.baz");
+        let pkg_py = interner.intern("pkg.py");
+        let other_py = interner.intern("other.py");
 
         let nodes_arena = vec![
-            Node::new(Some(pkg), foo, fqn_foo, Flavor::Class).with_location("pkg.py", 1),
-            Node::new(Some(pkg), bar, fqn_bar, Flavor::Function).with_location("pkg.py", 10),
-            Node::new(Some(other), baz, fqn_baz, Flavor::Function).with_location("other.py", 5),
+            Node::new(Some(pkg), foo, fqn_foo, Flavor::Class).with_location(pkg_py, 1),
+            Node::new(Some(pkg), bar, fqn_bar, Flavor::Function).with_location(pkg_py, 10),
+            Node::new(Some(other), baz, fqn_baz, Flavor::Function).with_location(other_py, 5),
         ];
         let mut defined = FxHashSet::default();
         defined.insert(0);
@@ -905,10 +904,12 @@ mod tests {
         let b = interner.intern("B");
         let fqn_a = interner.intern("pkg.A");
         let fqn_b = interner.intern("other.B");
+        let pkg_py = interner.intern("pkg.py");
+        let other_py = interner.intern("other.py");
 
         let nodes_arena = vec![
-            Node::new(Some(pkg), a, fqn_a, Flavor::Class).with_location("pkg.py", 1),
-            Node::new(Some(other), b, fqn_b, Flavor::Function).with_location("other.py", 5),
+            Node::new(Some(pkg), a, fqn_a, Flavor::Class).with_location(pkg_py, 1),
+            Node::new(Some(other), b, fqn_b, Flavor::Function).with_location(other_py, 5),
         ];
         let mut defined = FxHashSet::default();
         defined.insert(0);
