@@ -521,8 +521,9 @@ mod tests {
         let mut interner = Interner::new();
         let ns = interner.intern("ns");
         let name = interner.intern("f");
+        let fqn = interner.intern("ns.f");
         let mut c = Colorizer::new(3, false);
-        let node = Node::new(Some(ns), name, Flavor::Function);
+        let node = Node::new(Some(ns), name, fqn, Flavor::Function);
         let (_, fill, text) = c.make_colors(&node, &interner);
         assert_eq!(fill, rgba_hex(1.0, 1.0, 1.0, 0.7));
         assert_eq!(text, "#000000");
@@ -535,10 +536,13 @@ mod tests {
         let a = interner.intern("a");
         let b = interner.intern("b");
         let c_name = interner.intern("c");
+        let fqn_a = interner.intern("ns.a");
+        let fqn_b = interner.intern("ns.b");
+        let fqn_c = interner.intern("ns.c");
         let mut c = Colorizer::new(2, true);
-        let n1 = Node::new(Some(ns), a, Flavor::Function).with_location("file1.py", 1);
-        let n2 = Node::new(Some(ns), b, Flavor::Function).with_location("file2.py", 1);
-        let n3 = Node::new(Some(ns), c_name, Flavor::Function).with_location("file3.py", 1);
+        let n1 = Node::new(Some(ns), a, fqn_a, Flavor::Function).with_location("file1.py", 1);
+        let n2 = Node::new(Some(ns), b, fqn_b, Flavor::Function).with_location("file2.py", 1);
+        let n3 = Node::new(Some(ns), c_name, fqn_c, Flavor::Function).with_location("file3.py", 1);
         let (i1, _, _) = c.make_colors(&n1, &interner);
         let (i2, _, _) = c.make_colors(&n2, &interner);
         let (i3, _, _) = c.make_colors(&n3, &interner);
@@ -553,9 +557,11 @@ mod tests {
         let pkg = interner.intern("pkg");
         let a = interner.intern("A");
         let b = interner.intern("B");
+        let fqn_a = interner.intern("pkg.A");
+        let fqn_b = interner.intern("pkg.B");
         let nodes_arena = vec![
-            Node::new(Some(pkg), a, Flavor::Class).with_location("pkg.py", 1),
-            Node::new(Some(pkg), b, Flavor::Function).with_location("pkg.py", 10),
+            Node::new(Some(pkg), a, fqn_a, Flavor::Class).with_location("pkg.py", 1),
+            Node::new(Some(pkg), b, fqn_b, Flavor::Function).with_location("pkg.py", 10),
         ];
         let mut defined = FxHashSet::default();
         defined.insert(0);
@@ -594,9 +600,11 @@ mod tests {
         let other = interner.intern("other");
         let a = interner.intern("A");
         let b = interner.intern("B");
+        let fqn_a = interner.intern("pkg.A");
+        let fqn_b = interner.intern("other.B");
         let nodes_arena = vec![
-            Node::new(Some(pkg), a, Flavor::Class).with_location("pkg.py", 1),
-            Node::new(Some(other), b, Flavor::Function).with_location("other.py", 5),
+            Node::new(Some(pkg), a, fqn_a, Flavor::Class).with_location("pkg.py", 1),
+            Node::new(Some(other), b, fqn_b, Flavor::Function).with_location("other.py", 5),
         ];
         let mut defined = FxHashSet::default();
         defined.insert(0);
@@ -631,8 +639,9 @@ mod tests {
         let mut interner = Interner::new();
         let pkg = interner.intern("pkg");
         let a = interner.intern("A");
+        let fqn_a = interner.intern("pkg.A");
         let nodes_arena =
-            vec![Node::new(Some(pkg), a, Flavor::Class).with_location("pkg.py", 7)];
+            vec![Node::new(Some(pkg), a, fqn_a, Flavor::Class).with_location("pkg.py", 7)];
         let defined = FxHashSet::from_iter([0]);
 
         let options = VisualOptions {

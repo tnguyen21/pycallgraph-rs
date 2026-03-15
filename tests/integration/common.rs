@@ -88,7 +88,7 @@ pub(crate) fn get_full_uses(cg: &CallGraph, source_name: &str) -> HashSet<String
     for &nid in find_nodes_by_name(cg, source_name).iter() {
         if let Some(targets) = cg.uses_edges.get(&nid) {
             for &tid in targets {
-                result.insert(cg.nodes_arena[tid].get_name(&cg.interner));
+                result.insert(cg.nodes_arena[tid].get_name(&cg.interner).to_string());
             }
         }
     }

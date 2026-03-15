@@ -577,7 +577,7 @@ fn node_name_and_namespace(node: &Node, canonical_name: &str, interner: &Interne
 }
 
 fn symbol_ref(node: &Node, formatter: &PathFormatter, interner: &Interner) -> Option<SymbolRef> {
-    let canonical_name = node.get_name(interner);
+    let canonical_name = node.get_name(interner).to_string();
     let kind = public_kind(node)?.to_string();
     let (name, namespace) = node_name_and_namespace(node, &canonical_name, interner);
     Some(SymbolRef {
@@ -653,7 +653,7 @@ fn resolve_single_symbol(
             "ambiguous_query",
             format!("Query '{symbol}' matched multiple symbols"),
             many.iter()
-                .map(|id| cg.nodes_arena[*id].get_name(&cg.interner))
+                .map(|id| cg.nodes_arena[*id].get_name(&cg.interner).to_string())
                 .collect(),
         )),
     }
@@ -708,7 +708,7 @@ fn collect_query_diagnostics(
 
     let relevant_source_names: FxHashSet<String> = relevant_source_ids
         .iter()
-        .map(|id| cg.nodes_arena[*id].get_name(&cg.interner))
+        .map(|id| cg.nodes_arena[*id].get_name(&cg.interner).to_string())
         .collect();
 
     let mut unresolved_suppressions: FxHashSet<(String, String)> = FxHashSet::default();
@@ -752,7 +752,7 @@ fn collect_query_diagnostics(
 
     for source_id in source_ids {
         let source_node = &cg.nodes_arena[source_id];
-        let source_name = source_node.get_name(&cg.interner);
+        let source_name = source_node.get_name(&cg.interner).to_string();
         let path = source_node
             .filename
             .as_ref()
@@ -803,7 +803,7 @@ fn collect_query_diagnostics(
                 concrete_groups
                     .entry(target_name_str)
                     .or_default()
-                    .push(target.get_name(&cg.interner));
+                    .push(target.get_name(&cg.interner).to_string());
             }
         }
 
@@ -1040,7 +1040,7 @@ pub fn summary(
                     .flat_map(|(source, targets)| {
                         let symbol_names = symbol_names.clone();
                         targets.iter().filter(move |target| {
-                            symbol_names.contains(&cg.nodes_arena[**target].get_name(&cg.interner))
+                            symbol_names.contains(cg.nodes_arena[**target].get_name(&cg.interner))
                                 && cg.defined.contains(source)
                         })
                     })
@@ -1049,7 +1049,7 @@ pub fn summary(
                     .uses_edges
                     .iter()
                     .filter(|(source, _)| {
-                        symbol_names.contains(&cg.nodes_arena[**source].get_name(&cg.interner))
+                        symbol_names.contains(cg.nodes_arena[**source].get_name(&cg.interner))
                     })
                     .map(|(_, targets)| {
                         targets
@@ -1068,17 +1068,17 @@ pub fn summary(
 
                 for (source, targets) in &cg.uses_edges {
                     let source_name = cg.nodes_arena[*source].get_name(&cg.interner);
-                    let source_in_scope = symbol_names.contains(&source_name);
+                    let source_in_scope = symbol_names.contains(source_name);
                     for target_id in targets {
                         if !cg.defined.contains(target_id) {
                             continue;
                         }
                         let target_name = cg.nodes_arena[*target_id].get_name(&cg.interner);
-                        if symbol_names.contains(&target_name) && cg.defined.contains(source) {
-                            *caller_counts.entry(target_name.clone()).or_insert(0) += 1;
+                        if symbol_names.contains(target_name) && cg.defined.contains(source) {
+                            *caller_counts.entry(target_name.to_string()).or_insert(0) += 1;
                         }
                         if source_in_scope {
-                            *callee_counts.entry(source_name.clone()).or_insert(0) += 1;
+                            *callee_counts.entry(source_name.to_string()).or_insert(0) += 1;
                         }
                     }
                 }
@@ -1390,8 +1390,8 @@ pub fn path(
         .windows(2)
         .map(|pair| PathEdge {
             kind: "uses".to_string(),
-            source: cg.nodes_arena[pair[0]].get_name(&cg.interner),
-            target: cg.nodes_arena[pair[1]].get_name(&cg.interner),
+            source: cg.nodes_arena[pair[0]].get_name(&cg.interner).to_string(),
+            target: cg.nodes_arena[pair[1]].get_name(&cg.interner).to_string(),
         })
         .collect();
     let relevant_ids: FxHashSet<NodeId> = node_ids.iter().copied().collect();

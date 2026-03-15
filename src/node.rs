@@ -64,6 +64,8 @@ pub struct Node {
     pub namespace: Option<SymId>,
     /// The short name of this node.
     pub name: SymId,
+    /// Cached fully-qualified name ("namespace.name"), interned once at creation.
+    pub fqn: SymId,
     /// The flavor of this node.
     pub flavor: Flavor,
     /// The filename where this node is defined.
@@ -73,10 +75,11 @@ pub struct Node {
 }
 
 impl Node {
-    pub fn new(namespace: Option<SymId>, name: SymId, flavor: Flavor) -> Self {
+    pub fn new(namespace: Option<SymId>, name: SymId, fqn: SymId, flavor: Flavor) -> Self {
         Self {
             namespace,
             name,
+            fqn,
             flavor,
             filename: None,
             line: None,
@@ -89,19 +92,9 @@ impl Node {
         self
     }
 
-    /// Get the fully qualified name: "namespace.name" or just "name" if no namespace.
-    pub fn get_name(&self, interner: &Interner) -> String {
-        match self.namespace {
-            Some(ns) => {
-                let ns_str = interner.resolve(ns);
-                if !ns_str.is_empty() {
-                    format!("{ns_str}.{}", interner.resolve(self.name))
-                } else {
-                    interner.resolve(self.name).to_owned()
-                }
-            }
-            None => interner.resolve(self.name).to_owned(),
-        }
+    /// Get the fully qualified name — zero allocation, just a lookup.
+    pub fn get_name<'a>(&self, interner: &'a Interner) -> &'a str {
+        interner.resolve(self.fqn)
     }
 
     /// Get the short name for display.

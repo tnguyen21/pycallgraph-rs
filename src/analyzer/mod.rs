@@ -445,7 +445,7 @@ impl AnalysisSession {
         );
 
         let from_node = self.get_node_of_current_namespace();
-        let ns = self.nodes_arena[from_node].get_name(&self.graph.interner);
+        let ns = self.nodes_arena[from_node].get_name(&self.graph.interner).to_owned();
         let to_node = self.get_node(Some(&ns), &class_name, Flavor::Class);
         if self.add_defines_edge(from_node, Some(to_node)) {
             info!(
@@ -525,7 +525,7 @@ impl AnalysisSession {
         let (self_name, flavor, deco_ids) = self.analyze_function_def(node, line_index);
 
         let from_node = self.get_node_of_current_namespace();
-        let ns = self.nodes_arena[from_node].get_name(&self.graph.interner);
+        let ns = self.nodes_arena[from_node].get_name(&self.graph.interner).to_owned();
         let to_node = self.get_node(Some(&ns), &func_name, flavor);
         if self.add_defines_edge(from_node, Some(to_node)) {
             info!(
@@ -1262,7 +1262,7 @@ impl AnalysisSession {
         if let Expr::Name(ref name_expr) = *node.name {
             let alias_name = name_expr.id.to_string();
             let from_node = self.get_node_of_current_namespace();
-            let ns = self.nodes_arena[from_node].get_name(&self.graph.interner);
+            let ns = self.nodes_arena[from_node].get_name(&self.graph.interner).to_owned();
             let to_node = self.get_node(Some(&ns), &alias_name, Flavor::Name);
             self.add_defines_edge(from_node, Some(to_node));
             let line = line_index.line_index(node.range().start()).get();
@@ -1480,13 +1480,13 @@ impl AnalysisSession {
                     if self.nodes_arena[obj_id].namespace.is_none() {
                         continue; // skip wildcards as objects
                     }
-                    let ns = self.nodes_arena[obj_id].get_name(&self.graph.interner);
+                    let ns = self.nodes_arena[obj_id].get_name(&self.graph.interner).to_owned();
 
                     // Direct lookup in the object's scope, then MRO.
                     let attr_result = self.lookup_in_scope(&ns, &attr_name).or_else(|| {
                         if let Some(mro) = self.mro.get(&obj_id) {
                             return mro.iter().skip(1).find_map(|&base_id| {
-                                let base_ns = self.nodes_arena[base_id].get_name(&self.graph.interner);
+                                let base_ns = self.nodes_arena[base_id].get_name(&self.graph.interner).to_owned();
                                 self.lookup_in_scope(&base_ns, &attr_name)
                             });
                         }
@@ -1574,7 +1574,7 @@ impl AnalysisSession {
             && self.class_base_ast_info.contains_key(&func_id)
         {
             let from_node = self.get_node_of_current_namespace();
-            let func_name = self.nodes_arena[func_id].get_name(&self.graph.interner);
+            let func_name = self.nodes_arena[func_id].get_name(&self.graph.interner).to_owned();
             let init_node = self.get_node(Some(&func_name), "__init__", Flavor::Method);
             if self.add_uses_edge(from_node, init_node) {
                 info!(
@@ -1690,7 +1690,7 @@ impl AnalysisSession {
 
         // Add defines edge for the lambda
         let from_node = self.get_node_of_current_namespace();
-        let from_name = self.nodes_arena[from_node].get_name(&self.graph.interner);
+        let from_name = self.nodes_arena[from_node].get_name(&self.graph.interner).to_owned();
         let to_node = self.get_node(Some(&from_name), label, Flavor::Namespace);
         self.add_defines_edge(from_node, Some(to_node));
 
@@ -1745,7 +1745,7 @@ impl AnalysisSession {
     /// directly in the class scope, then through the MRO chain.
     fn emit_protocol_edges(&mut self, obj_id: NodeId, method_names: &[&str]) {
         let from_node = self.get_node_of_current_namespace();
-        let class_ns = self.nodes_arena[obj_id].get_name(&self.graph.interner);
+        let class_ns = self.nodes_arena[obj_id].get_name(&self.graph.interner).to_owned();
 
         for &method_name in method_names {
             // Direct lookup in the class scope.
@@ -1760,9 +1760,10 @@ impl AnalysisSession {
                 }
             } else {
                 // Fall back to MRO chain.
-                let method_id = self.mro.get(&obj_id).and_then(|mro| {
+                let mro_ids: Option<Vec<usize>> = self.mro.get(&obj_id).map(|m| m.clone());
+                let method_id = mro_ids.as_ref().and_then(|mro| {
                     mro.iter().skip(1).find_map(|&base_id| {
-                        let base_ns = self.nodes_arena[base_id].get_name(&self.graph.interner);
+                        let base_ns = self.nodes_arena[base_id].get_name(&self.graph.interner).to_owned();
                         self.lookup_in_scope(&base_ns, method_name)
                     })
                 });
@@ -1875,7 +1876,7 @@ impl AnalysisSession {
 
         // Add defines edge
         let from_node = self.get_node_of_current_namespace();
-        let from_name = self.nodes_arena[from_node].get_name(&self.graph.interner);
+        let from_name = self.nodes_arena[from_node].get_name(&self.graph.interner).to_owned();
         let to_node = self.get_node(Some(&from_name), label, Flavor::Namespace);
         self.add_defines_edge(from_node, Some(to_node));
 
@@ -2021,7 +2022,7 @@ mod prepass_tests {
             .get(&from_id)
             .into_iter()
             .flat_map(|targets| targets.iter())
-            .map(|&id| cg.nodes_arena[id].get_name(&cg.interner))
+            .map(|&id| cg.nodes_arena[id].get_name(&cg.interner).to_string())
             .collect()
     }
 

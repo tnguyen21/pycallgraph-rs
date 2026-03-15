@@ -150,7 +150,7 @@ impl AnalysisSession {
         if let Some(obj_id) = obj_node
             && self.nodes_arena[obj_id].namespace.is_some()
         {
-            let ns = self.nodes_arena[obj_id].get_name(&self.graph.interner);
+            let ns = self.nodes_arena[obj_id].get_name(&self.graph.interner).to_owned();
             let ns_sym = self.graph.interner.intern(&ns);
             let attr_sym = self.graph.interner.intern(&attr_name);
             if let Some(scope) = self.scopes.get_mut(&ns_sym) {
@@ -175,7 +175,7 @@ impl AnalysisSession {
         if let Some(obj_id) = obj_node
             && self.nodes_arena[obj_id].namespace.is_some()
         {
-            let ns = self.nodes_arena[obj_id].get_name(&self.graph.interner);
+            let ns = self.nodes_arena[obj_id].get_name(&self.graph.interner).to_owned();
             let ns_sym = self.graph.interner.intern(&ns);
             let attr_sym = self.graph.interner.intern(&attr_name);
             if let Some(scope) = self.scopes.get_mut(&ns_sym) {

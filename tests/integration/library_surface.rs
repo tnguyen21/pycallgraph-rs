@@ -82,10 +82,12 @@ fn test_node_equality_and_hash() {
     let pkg = interner.intern("pkg");
     let other = interner.intern("other");
     let foo = interner.intern("Foo");
+    let fqn_pkg_foo = interner.intern("pkg.Foo");
+    let fqn_other_foo = interner.intern("other.Foo");
 
-    let a = Node::new(Some(pkg), foo, Flavor::Class);
-    let b = Node::new(Some(pkg), foo, Flavor::Function); // same ns+name, different flavor
-    let c = Node::new(Some(other), foo, Flavor::Class); // different namespace
+    let a = Node::new(Some(pkg), foo, fqn_pkg_foo, Flavor::Class);
+    let b = Node::new(Some(pkg), foo, fqn_pkg_foo, Flavor::Function); // same ns+name, different flavor
+    let c = Node::new(Some(other), foo, fqn_other_foo, Flavor::Class); // different namespace
 
     // PartialEq only checks namespace + name
     assert_eq!(
@@ -111,12 +113,14 @@ fn test_node_display_and_short_name() {
     let func = interner.intern("func");
     let empty = interner.intern("");
     let mod_sym = interner.intern("mod");
+    let fqn_func = interner.intern("pkg.sub.func");
 
-    let n = Node::new(Some(pkg_sub), func, Flavor::Function);
+    let n = Node::new(Some(pkg_sub), func, fqn_func, Flavor::Function);
     assert_eq!(n.get_name(&interner), "pkg.sub.func");
     assert_eq!(n.get_short_name(&interner), "func");
 
-    let root = Node::new(Some(empty), mod_sym, Flavor::Module);
+    // ns is empty string, so fqn == name_sym
+    let root = Node::new(Some(empty), mod_sym, mod_sym, Flavor::Module);
     assert_eq!(root.get_name(&interner), "mod");
     assert_eq!(root.get_short_name(&interner), "mod");
 }

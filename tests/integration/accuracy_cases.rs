@@ -137,7 +137,7 @@ fn evaluate_expectation(cg: &CallGraph, expectation: &AccuracyExpectation) -> Ex
 
     let mut matched_target_names: Vec<String> = matched_target_ids
         .into_iter()
-        .map(|target_id| cg.nodes_arena[target_id].get_name(&cg.interner))
+        .map(|target_id| cg.nodes_arena[target_id].get_name(&cg.interner).to_string())
         .collect();
     matched_target_names.sort();
 

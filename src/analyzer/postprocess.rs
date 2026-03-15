@@ -252,7 +252,7 @@ impl super::AnalysisSession {
                 _ => None,
             };
             if let Some(kind) = external_kind {
-                let canonical = self.nodes_arena[to].get_name(&self.graph.interner);
+                let canonical = self.nodes_arena[to].get_name(&self.graph.interner).to_string();
                 self.record_external_reference(from, kind, canonical);
             }
             let name_str = self.graph.interner.resolve(self.nodes_arena[to].name).to_owned();
@@ -358,7 +358,8 @@ impl super::CallGraph {
                 let id = nodes.len();
                 let ns_sym = interner.intern("");
                 let name_sym = interner.intern(name);
-                nodes.push(Node::new(Some(ns_sym), name_sym, Flavor::Module));
+                // ns is empty string, so fqn == name_sym
+                nodes.push(Node::new(Some(ns_sym), name_sym, name_sym, Flavor::Module));
                 module_ids.insert(name.to_string(), id);
                 id
             };
@@ -387,7 +388,7 @@ impl super::CallGraph {
                 let tgt_node = &self.nodes_arena[tgt];
 
                 let tgt_mod: Option<String> = if tgt_node.flavor == Flavor::Module {
-                    Some(tgt_node.get_name(&self.interner))
+                    Some(tgt_node.get_name(&self.interner).to_string())
                 } else {
                     tgt_node
                         .filename

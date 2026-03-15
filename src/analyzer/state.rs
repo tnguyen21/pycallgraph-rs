@@ -9,7 +9,7 @@ impl AnalysisSession {
     ) {
         let source = &self.nodes_arena[source_id];
         let diagnostic = ExternalReferenceDiagnostic {
-            source_canonical_name: source.get_name(&self.graph.interner),
+            source_canonical_name: source.get_name(&self.graph.interner).to_string(),
             source_filename: source.filename.clone(),
             source_line: source.line,
             kind,
@@ -56,7 +56,19 @@ impl AnalysisSession {
             Some(self.filename.clone())
         };
 
-        let mut node = Node::new(ns_sym, name_sym, flavor);
+        let fqn_sym = match ns_sym {
+            Some(ns) => {
+                let ns_str = self.graph.interner.resolve(ns);
+                if !ns_str.is_empty() {
+                    let fqn = format!("{ns_str}.{name}");
+                    self.graph.interner.intern(&fqn)
+                } else {
+                    name_sym
+                }
+            }
+            None => name_sym,
+        };
+        let mut node = Node::new(ns_sym, name_sym, fqn_sym, flavor);
         node.filename = filename;
         let id = self.nodes_arena.len();
         if ns_sym.is_none() {
@@ -119,7 +131,20 @@ impl AnalysisSession {
             Some(self.filename.clone())
         };
 
-        let mut node = Node::new(namespace, name, flavor);
+        let fqn = match namespace {
+            Some(ns) => {
+                let ns_str = self.graph.interner.resolve(ns);
+                if !ns_str.is_empty() {
+                    let name_str = self.graph.interner.resolve(name);
+                    let fqn_str = format!("{ns_str}.{name_str}");
+                    self.graph.interner.intern(&fqn_str)
+                } else {
+                    name
+                }
+            }
+            None => name,
+        };
+        let mut node = Node::new(namespace, name, fqn, flavor);
         node.filename = filename;
         let id = self.nodes_arena.len();
         if namespace.is_none() {

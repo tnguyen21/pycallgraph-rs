@@ -470,7 +470,7 @@ fn build_json_diagnostics(
 
     let canonical_name_to_output_id: FxHashMap<String, String> = node_ids
         .iter()
-        .map(|(node_id, output_id)| (nodes_arena[*node_id].get_name(interner), output_id.clone()))
+        .map(|(node_id, output_id)| (nodes_arena[*node_id].get_name(interner).to_string(), output_id.clone()))
         .collect();
     let path_to_output_id: FxHashMap<String, String> = node_ids
         .iter()
@@ -714,7 +714,7 @@ pub fn write_json(
 
     for &id in &sorted_ids {
         let n = &nodes_arena[id];
-        let canonical_name = n.get_name(interner);
+        let canonical_name = n.get_name(interner).to_string();
         let (name, namespace) = node_name_and_namespace(n, &canonical_name, interner);
         if let Some(ref f) = n.filename {
             files.insert(f.as_str());
@@ -854,11 +854,14 @@ mod tests {
         let foo = interner.intern("Foo");
         let bar = interner.intern("bar");
         let baz = interner.intern("baz");
+        let fqn_foo = interner.intern("pkg.Foo");
+        let fqn_bar = interner.intern("pkg.bar");
+        let fqn_baz = interner.intern("other.baz");
 
         let nodes_arena = vec![
-            Node::new(Some(pkg), foo, Flavor::Class).with_location("pkg.py", 1),
-            Node::new(Some(pkg), bar, Flavor::Function).with_location("pkg.py", 10),
-            Node::new(Some(other), baz, Flavor::Function).with_location("other.py", 5),
+            Node::new(Some(pkg), foo, fqn_foo, Flavor::Class).with_location("pkg.py", 1),
+            Node::new(Some(pkg), bar, fqn_bar, Flavor::Function).with_location("pkg.py", 10),
+            Node::new(Some(other), baz, fqn_baz, Flavor::Function).with_location("other.py", 5),
         ];
         let mut defined = FxHashSet::default();
         defined.insert(0);
@@ -900,10 +903,12 @@ mod tests {
         let other = interner.intern("other");
         let a = interner.intern("A");
         let b = interner.intern("B");
+        let fqn_a = interner.intern("pkg.A");
+        let fqn_b = interner.intern("other.B");
 
         let nodes_arena = vec![
-            Node::new(Some(pkg), a, Flavor::Class).with_location("pkg.py", 1),
-            Node::new(Some(other), b, Flavor::Function).with_location("other.py", 5),
+            Node::new(Some(pkg), a, fqn_a, Flavor::Class).with_location("pkg.py", 1),
+            Node::new(Some(other), b, fqn_b, Flavor::Function).with_location("other.py", 5),
         ];
         let mut defined = FxHashSet::default();
         defined.insert(0);
