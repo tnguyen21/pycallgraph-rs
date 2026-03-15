@@ -35,6 +35,18 @@
           "source": "chained_alias_caller",
           "target": "target_two",
           "present": true
+        },
+        {
+          "kind": "uses",
+          "source": "chained_alias_caller",
+          "target": "func_a",
+          "present": false
+        },
+        {
+          "kind": "uses",
+          "source": "chained_alias_caller",
+          "target": "bar",
+          "present": false
         }
       ]
     },
@@ -155,6 +167,18 @@
           "source": "call_decorated",
           "target": "factory_decorated",
           "present": true
+        },
+        {
+          "kind": "uses",
+          "source": "call_decorated",
+          "target": "simple_decorator",
+          "present": false
+        },
+        {
+          "kind": "uses",
+          "source": "call_decorated",
+          "target": "factory_decorator",
+          "present": false
         }
       ]
     },
@@ -494,6 +518,12 @@
           "target_match": "concrete_short",
           "present": true,
           "min_matches": 2
+        },
+        {
+          "kind": "uses",
+          "source": "multi_return_caller",
+          "target": "wrap",
+          "present": false
         }
       ]
     },
@@ -902,6 +932,219 @@
           "target": "test_code.features.MyCtx.__exit__",
           "target_match": "concrete_full",
           "present": true
+        }
+      ]
+    },
+
+    {
+      "id": "precision.factory_isolation_a",
+      "category": "precision",
+      "files": ["tests/test_code/accuracy_precision.py"],
+      "expectations": [
+        {
+          "kind": "uses",
+          "source": "call_factory_a",
+          "target": "helper_a",
+          "present": true
+        },
+        {
+          "kind": "uses",
+          "source": "call_factory_a",
+          "target": "helper_b",
+          "present": false
+        },
+        {
+          "kind": "uses",
+          "source": "call_factory_a",
+          "target": "factory_b",
+          "present": false
+        }
+      ]
+    },
+    {
+      "id": "precision.factory_isolation_b",
+      "category": "precision",
+      "files": ["tests/test_code/accuracy_precision.py"],
+      "expectations": [
+        {
+          "kind": "uses",
+          "source": "call_factory_b",
+          "target": "helper_b",
+          "present": true
+        },
+        {
+          "kind": "uses",
+          "source": "call_factory_b",
+          "target": "helper_a",
+          "present": false
+        },
+        {
+          "kind": "uses",
+          "source": "call_factory_b",
+          "target": "factory_a",
+          "present": false
+        }
+      ]
+    },
+
+    {
+      "id": "precision.inheritance_override_a",
+      "category": "precision",
+      "files": ["tests/test_code/accuracy_precision.py"],
+      "expectations": [
+        {
+          "kind": "uses",
+          "source": "call_child_a_action",
+          "target": "test_code.accuracy_precision.ChildA.action",
+          "target_match": "concrete_full",
+          "present": true
+        },
+        {
+          "kind": "uses",
+          "source": "call_child_a_action",
+          "target": "test_code.accuracy_precision.ChildB.action",
+          "target_match": "concrete_full",
+          "present": false
+        },
+        {
+          "kind": "uses",
+          "source": "call_child_a_action",
+          "target": "test_code.accuracy_precision.Parent.action",
+          "target_match": "concrete_full",
+          "present": false
+        }
+      ]
+    },
+    {
+      "id": "precision.inheritance_override_b",
+      "category": "precision",
+      "files": ["tests/test_code/accuracy_precision.py"],
+      "expectations": [
+        {
+          "kind": "uses",
+          "source": "call_child_b_action",
+          "target": "test_code.accuracy_precision.ChildB.action",
+          "target_match": "concrete_full",
+          "present": true
+        },
+        {
+          "kind": "uses",
+          "source": "call_child_b_action",
+          "target": "test_code.accuracy_precision.ChildA.action",
+          "target_match": "concrete_full",
+          "present": false
+        },
+        {
+          "kind": "uses",
+          "source": "call_child_b_action",
+          "target": "test_code.accuracy_precision.Parent.action",
+          "target_match": "concrete_full",
+          "present": false
+        }
+      ]
+    },
+
+    {
+      "id": "precision.decorator_call_isolation",
+      "category": "precision",
+      "files": ["tests/test_code/accuracy_precision.py"],
+      "expectations": [
+        {
+          "kind": "uses",
+          "source": "call_only_one",
+          "target": "decorated_fn_one",
+          "present": true
+        },
+        {
+          "kind": "uses",
+          "source": "call_only_one",
+          "target": "decorated_fn_two",
+          "present": false
+        },
+        {
+          "kind": "uses",
+          "source": "call_only_one",
+          "target": "decorator_two",
+          "present": false
+        },
+        {
+          "kind": "uses",
+          "source": "call_only_two",
+          "target": "decorated_fn_two",
+          "present": true
+        },
+        {
+          "kind": "uses",
+          "source": "call_only_two",
+          "target": "decorated_fn_one",
+          "present": false
+        },
+        {
+          "kind": "uses",
+          "source": "call_only_two",
+          "target": "decorator_one",
+          "present": false
+        }
+      ]
+    },
+
+    {
+      "id": "precision.closure_isolation",
+      "category": "precision",
+      "files": ["tests/test_code/accuracy_precision.py"],
+      "expectations": [
+        {
+          "kind": "uses",
+          "source": "call_outer_a",
+          "target": "outer_a",
+          "present": true
+        },
+        {
+          "kind": "uses",
+          "source": "call_outer_a",
+          "target": "outer_b",
+          "present": false
+        },
+        {
+          "kind": "uses",
+          "source": "call_outer_b",
+          "target": "outer_b",
+          "present": true
+        },
+        {
+          "kind": "uses",
+          "source": "call_outer_b",
+          "target": "outer_a",
+          "present": false
+        }
+      ]
+    },
+
+    {
+      "id": "precision.multi_return_no_unrelated",
+      "category": "precision",
+      "files": ["tests/test_code/accuracy_precision.py"],
+      "expectations": [
+        {
+          "kind": "uses",
+          "source": "call_pet_speak",
+          "target": "test_code.accuracy_precision.Cat.speak",
+          "target_match": "concrete_full",
+          "present": true
+        },
+        {
+          "kind": "uses",
+          "source": "call_pet_speak",
+          "target": "test_code.accuracy_precision.Dog.speak",
+          "target_match": "concrete_full",
+          "present": true
+        },
+        {
+          "kind": "uses",
+          "source": "call_pet_speak",
+          "target": "test_code.accuracy_precision.Fish.speak",
+          "target_match": "concrete_full",
+          "present": false
         }
       ]
     }
