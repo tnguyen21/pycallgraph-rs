@@ -263,45 +263,56 @@ impl super::AnalysisSession {
         }
     }
 
-    /// Remove inherited edges.
+    /// Remove inherited edges: if W->X.name and W->Y.name where Y inherits
+    /// from X, remove the edge to X.name.
+    ///
+    /// Targets are grouped by short name so only same-name pairs are compared,
+    /// turning the inner loop from O(|targets|²) to O(Σ|bucket|²).
     fn cull_inherited(&mut self) {
         let mut removed: Vec<(NodeId, NodeId)> = Vec::new();
 
-        let uses_snapshot: Vec<(NodeId, FxHashSet<NodeId>)> = self
+        let uses_snapshot: Vec<(NodeId, Vec<NodeId>)> = self
             .uses_edges
             .iter()
-            .map(|(&k, v)| (k, v.clone()))
+            .map(|(&k, v)| (k, v.iter().copied().collect::<Vec<_>>()))
             .collect();
 
-        for (from, targets) in &uses_snapshot {
-            for &to in targets {
-                let mut inherited = false;
-                for &other in targets {
-                    if other == to {
-                        continue;
-                    }
-                    let to_name = self.nodes_arena[to].name;
-                    let other_name = self.nodes_arena[other].name;
-                    let to_ns = self.nodes_arena[to].namespace;
-                    let other_ns = self.nodes_arena[other].namespace;
+        // Reusable bucket map to avoid per-source allocation.
+        let mut by_name: FxHashMap<super::SymId, Vec<NodeId>> = FxHashMap::default();
 
-                    if to_name == other_name
-                        && to_ns.is_some()
-                        && other_ns.is_some()
-                        && to_ns != other_ns
-                    {
-                        let parent_to = self.get_parent_node(to);
-                        let parent_other = self.get_parent_node(other);
-                        if let Some(parent_other_uses) = self.uses_edges.get(&parent_other)
-                            && parent_other_uses.contains(&parent_to)
-                        {
-                            inherited = true;
-                            break;
+        for (from, targets) in &uses_snapshot {
+            // Group targets by short name, keeping only namespaced nodes.
+            by_name.clear();
+            for &to in targets {
+                let node = &self.nodes_arena[to];
+                if node.namespace.is_some() {
+                    by_name.entry(node.name).or_default().push(to);
+                }
+            }
+
+            // Only buckets with 2+ entries can have inheritance conflicts.
+            for bucket in by_name.values() {
+                if bucket.len() < 2 {
+                    continue;
+                }
+                for &to in bucket {
+                    let to_ns = self.nodes_arena[to].namespace;
+                    for &other in bucket {
+                        if other == to {
+                            continue;
+                        }
+                        let other_ns = self.nodes_arena[other].namespace;
+                        if to_ns != other_ns {
+                            let parent_to = self.get_parent_node(to);
+                            let parent_other = self.get_parent_node(other);
+                            if let Some(parent_other_uses) = self.uses_edges.get(&parent_other)
+                                && parent_other_uses.contains(&parent_to)
+                            {
+                                removed.push((*from, to));
+                                break;
+                            }
                         }
                     }
-                }
-                if inherited {
-                    removed.push((*from, to));
                 }
             }
         }
