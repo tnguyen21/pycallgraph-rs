@@ -264,6 +264,8 @@ pub struct CallGraph {
 pub(super) struct AnalysisSession {
     pub(super) graph: CallGraph,
     node_ids_by_key: FxHashMap<NodeKey, NodeId>,
+    /// Index: (from_id, name_sym) -> wild_node_id for O(1) wildcard lookup.
+    wild_edge_index: FxHashMap<(NodeId, SymId), NodeId>,
 
     // Scope tracking (persistent across files/passes) -------------------
     pub(super) scopes: FxHashMap<SymId, ScopeInfo>,

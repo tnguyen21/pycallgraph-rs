@@ -34,6 +34,7 @@ impl AnalysisSession {
                 module_to_filename,
             },
             node_ids_by_key: FxHashMap::default(),
+            wild_edge_index: FxHashMap::default(),
             scopes: FxHashMap::default(),
             function_returns: FxHashMap::default(),
             function_returns_changed: false,

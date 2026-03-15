@@ -216,7 +216,10 @@ impl AnalysisSession {
         if entry.insert(to_id) {
             let to_name = self.nodes_arena[to_id].name;
             let to_ns = self.nodes_arena[to_id].namespace;
-            if to_ns.is_some() {
+            if to_ns.is_none() {
+                // Register wildcard edge in the index.
+                self.wild_edge_index.insert((from_id, to_name), to_id);
+            } else {
                 self.remove_wild(from_id, to_id, to_name);
             }
             true
@@ -227,7 +230,13 @@ impl AnalysisSession {
 
     pub(super) fn remove_uses_edge(&mut self, from_id: NodeId, to_id: NodeId) {
         if let Some(edges) = self.uses_edges.get_mut(&from_id) {
-            edges.remove(&to_id);
+            if edges.remove(&to_id) {
+                // Clean up wild index if the removed edge was a wildcard.
+                let node = &self.nodes_arena[to_id];
+                if node.namespace.is_none() {
+                    self.wild_edge_index.remove(&(from_id, node.name));
+                }
+            }
         }
     }
 
@@ -236,24 +245,13 @@ impl AnalysisSession {
         if name_str.is_empty() {
             return;
         }
-        let Some(edges) = self.uses_edges.get(&from_id) else {
-            return;
-        };
 
         let to_name_str = self.nodes_arena[to_id].get_name(&self.graph.interner);
         if to_name_str.contains("^^^argument^^^") || to_id == from_id {
             return;
         }
 
-        let wild = edges
-            .iter()
-            .find(|&&eid| {
-                let n = &self.nodes_arena[eid];
-                n.namespace.is_none() && n.name == name_sym
-            })
-            .copied();
-
-        if let Some(wild_id) = wild {
+        if let Some(&wild_id) = self.wild_edge_index.get(&(from_id, name_sym)) {
             info!(
                 "Use from {} to {} resolves {}; removing wildcard",
                 self.nodes_arena[from_id].get_name(&self.graph.interner),
